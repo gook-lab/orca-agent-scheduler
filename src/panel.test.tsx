@@ -739,6 +739,12 @@ test('Settings and the form open under a line; Claude Code is not a star in the 
   assert.ok(view.find({ type: 'Separator' }))
   const rootGap = () => (view.tree() as { props?: { gap?: string } } | null)?.props?.gap
   assert.equal(rootGap(), 'md', 'sections apart, as in Settings')
+  // Days and time are fields of their own — each is a row of the form, so the same space lies between them.
+  const rowOf = (e: { path: string } | null) => e?.path.split('/')[1]
+  const days = rowOf(view.find({ type: 'Select', label: 'Days' }))
+  const time = rowOf(view.find({ text: 'Weekdays 09:00' }))
+  assert.ok(days && time, 'both are drawn')
+  assert.notEqual(days, time)
   assert.deepEqual(
     view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.icon]),
     [

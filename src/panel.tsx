@@ -1211,8 +1211,9 @@ function Form() {
   // Send once is about the prompt: terminal, prompt, Send; the name (first line if empty) waits under
   // More options. It has no /clear — a one-off usually carries on the conversation in that terminal.
   // A schedule keeps name, terminal, /clear, then when.
-  // Sections apart, each one's parts close: who (name; terminal and /clear), when, what, then the buttons
-  // with the reason they are off. The space under the title line matches Settings.
+  // Every labelled field apart, each one's parts close: name; terminal and /clear; days and their picker;
+  // time and what it comes to; prompt; then the buttons with the reason they are off. The space under the
+  // title line matches Settings.
   return (
     <Stack gap="md">
       <SubHeader title={d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule} onClose={() => leaveForm('top')} />
@@ -1230,10 +1231,14 @@ function Form() {
         {d.once ? null : clearField}
       </Stack>
       {c === null ? null : (
-        <Stack gap="sm">
+        <Stack gap="xs">
           <Select label={u.days} value={d.day} options={dayModes.map((m) => ({ value: m, label: u.dayChoice[m] }))} onChange={changeDay} />
           {d.day === 'pick' ? <DayPicker /> : null}
           {d.day === 'dates' ? <DateCalendar /> : null}
+        </Stack>
+      )}
+      {c === null ? null : (
+        <Stack gap="xs">
           {d.day === 'cron' ? (
             <Input label={u.cron} value={d.cron} placeholder={u.cronPlaceholder} onChange={(cron) => patch({ cron })} invalid={'error' in c} />
           ) : (

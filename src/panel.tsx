@@ -85,6 +85,9 @@ const favorites = atom<string[]>([])
 const FAVORITES_KEY = 'favorites'
 /** The terminal list is being read — the reload button turns into a spinner. */
 const refreshing = atom(false)
+/** The schedule just saved, marked for a moment so the eye finds it. */
+const justSaved = atom<string | null>(null)
+const SAVED_MS = 4000
 /** The introduction was finished or skipped; until then it opens in place of the list. Set once, never
  *  toggled — a persisted atom flipped back and forth by presses misbehaved. */
 const onboarded = atom('onboarded', false, { persist: 'storage' })
@@ -167,6 +170,13 @@ async function refreshTerminals(): Promise<void> {
   } finally {
     set(refreshing, false)
   }
+}
+
+/** The Terminals tab, read afresh — the worker's push can be up to a check (30 s) behind, so a terminal
+ *  just started shows at once. What is there stays in sight meanwhile; the reload button spins. */
+function showTerminals(): void {
+  set(tab, 'terminals')
+  void refreshTerminals()
 }
 
 /** A pane keeps its id across Orca restarts; the handle does not. */
@@ -412,8 +422,17 @@ function reveal(t: TerminalRef, names: string[] = []): void {
   if (!matches(q, [...names, ...terminalTexts(t)])) set(query, '')
 }
 
-/** After saving, show where it went — saved from the Terminals tab, it was otherwise out of sight. */
-const showSaved = (s: Schedule): void => reveal(s.terminal, [s.name])
+/** After saving, show where it went — saved from the Terminals tab, it was otherwise out of sight — and
+ *  mark it for a moment. */
+function showSaved(s: Schedule): void {
+  reveal(s.terminal, [s.name])
+  set(justSaved, s.id)
+  const timer = setTimeout(() => {
+    if (read(justSaved) === s.id) set(justSaved, null)
+  }, SAVED_MS)
+  // Node (`orca plugin test`) would otherwise wait for the timer before exiting.
+  ;(timer as { unref?: () => void }).unref?.()
+}
 
 const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'warning' | 'neutral' | 'accent' =>
   status === 'success' || status === 'done' || status === 'doneWaiting'
@@ -479,7 +498,7 @@ function Nav() {
   const u = words(read(lang)).ui
   return (
     <Stack gap="xs">
-      <Tabs label={u.view} value={read(tab)} onChange={(v) => set(tab, v === 'terminals' ? 'terminals' : 'schedules')}>
+      <Tabs label={u.view} value={read(tab)} onChange={(v) => (v === 'terminals' ? showTerminals() : set(tab, 'schedules'))}>
         <Tab value="schedules" label={u.tabSchedules(read(schedules).filter((s) => !s.once).length)} />
         <Tab value="terminals" label={u.tabTerminals(read(terminals)?.length ?? 0)} />
       </Tabs>
@@ -620,8 +639,16 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
   // waiting its turn stays grey.
   const urgent = needsAttention(s)
   const nextText = s.enabled ? (s.nextRunAt !== null ? `${u.next} ${whenText(l, s.nextRunAt)}` : u.never) : u.off
+  const saved = read(justSaved) === s.id
   return (
-    <Box border radius="md" padding="sm" gap="xs">
+    // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.
+    <Box
+      border={saved ? 'success' : true}
+      background={saved ? 'success' : undefined}
+      radius="md"
+      padding="sm"
+      gap="xs"
+    >
       {/* The name gets the whole width — next to the buttons a long name broke a word per line. */}
       <Switch label={s.name} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
       <Box direction="row" align="center" gap="xs">
@@ -818,7 +845,7 @@ function SchedulesView() {
     return (
       <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription}>
         <Row>
-          <Button size="sm" variant="outline" icon="terminal" onPress={() => set(tab, 'terminals')}>
+          <Button size="sm" variant="outline" icon="terminal" onPress={showTerminals}>
             {u.openTerminals}
           </Button>
         </Row>
@@ -855,15 +882,25 @@ function SchedulesView() {
         </Box>
         <Stats />
       </Stack>
-      {groups.length === 0 ? (
-        <Text size="xs" muted>
-          {u.noMatch(read(query).trim())}
-        </Text>
-      ) : null}
+      {groups.length === 0 ? <NoMatch /> : null}
       {groups.map((g) => (
         <TerminalBlock g={g} />
       ))}
     </Stack>
+  )
+}
+
+/** A search that hides everything — both tabs say so the same way, with the way out. */
+function NoMatch() {
+  const u = words(read(lang)).ui
+  return (
+    <EmptyState icon="search" title={u.noMatch(read(query).trim())}>
+      <Row>
+        <Button size="sm" variant="outline" onPress={() => set(query, '')}>
+          {u.clearSearch}
+        </Button>
+      </Row>
+    </EmptyState>
   )
 }
 
@@ -877,12 +914,7 @@ function TerminalsView() {
   const favs = read(favorites)
   const rank = (t: TerminalOption) => (favs.includes(paneOf(t)) ? 0 : 1)
   const shown = open.filter((t) => matches(q, terminalTexts(t))).sort((a, b) => rank(a) - rank(b))
-  if (shown.length === 0)
-    return (
-      <Text size="xs" muted>
-        {u.noMatch(read(query).trim())}
-      </Text>
-    )
+  if (shown.length === 0) return <NoMatch />
   const list = read(schedules)
   const countOf = (t: TerminalOption) => list.filter((s) => !s.once && sameTerminal(t, s.terminal)).length
   return (
@@ -1288,7 +1320,7 @@ function Intro() {
   const finish = () => {
     // First time and nothing scheduled — the place to start is a terminal. Opened again, it returns
     // to where it was.
-    if (!read(onboarded) && read(schedules).length === 0) set(tab, 'terminals')
+    if (!read(onboarded) && read(schedules).length === 0) showTerminals()
     set(onboarded, true)
     set(introStep, null)
   }

@@ -46,7 +46,7 @@ Sending uses `orca terminal send --terminal <handle> --text <prompt> --enter --w
 | Time | Set times (up to 24) or every N minutes (1–720), all day or between two times |
 | Cron | Five fields, or six with a year; several expressions joined by `;` |
 
-× (top right) or Cancel leaves at once when nothing was changed; otherwise it asks before throwing the text away, next to the button pressed. The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`). Create stays off until the form is complete, with the first missing field named above it (name, terminal, time, prompt). After saving, the panel shows the Schedules tab with that terminal's block open. A schedule saved as cron that the form can express reopens in the form.
+× (top right) or Cancel leaves at once when nothing was changed; otherwise it asks before throwing the text away, next to the button pressed. The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`). Create stays off until the form is complete, with the first missing field named above it (name, terminal, time, prompt). After saving, the panel shows the Schedules tab with that terminal's block open. The saved schedule is tinted green for a few seconds. A schedule saved as cron that the form can express reopens in the form.
 
 ## Screens — side panel laid out like Orca's own sidebars
 
@@ -56,7 +56,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 |---|---|
 | Introduction | The first time the panel opens, three short pages take the place of the list: prompts on a schedule, only when the terminal is free, start from a terminal. Skip or Get started ends it for good; when nothing is scheduled yet, it lands on the Terminals tab. Settings and the help under the list open it again |
 | Title row | **Agent Scheduler**, then New schedule (+), Send once (›), Reload terminals (a spinner while the list is read) and Settings. Settings and the form keep the same row: their title on the left, × on the right |
-| Tabs and search | **Schedules N** and **Terminals N**. The search box under them filters both, by terminal title, workspace, agent or schedule name |
+| Tabs and search | **Schedules N** and **Terminals N**. Entering Terminals reads the terminal list afresh (the reload button spins meanwhile; what is there stays in sight). The search box under them filters both, by terminal title, workspace, agent or schedule name; a search that hides everything says so with **Clear search** |
 | Schedules | What runs next, with the time left counting down every second while the panel is in view, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal. With nothing scheduled, one line and an **Open Terminals** button |
 | How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; quiet for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |

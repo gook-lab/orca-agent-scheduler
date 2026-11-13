@@ -267,9 +267,12 @@ test('search filters both tabs — by terminal, workspace, agent or schedule nam
   assert.ok(view.find({ label: 'PR review' }), 'the agent matches, so its whole block stays')
   assert.equal(view.find({ label: 'Release notes' }), null)
   await view.type({ label: 'Find' }, 'nothing here', { replace: true })
-  assert.ok(view.find({ text: 'Nothing matches “nothing here”' }))
+  assert.ok(view.find({ label: 'Nothing matches “nothing here”' }))
   await view.select({ type: 'Tabs' }, 'terminals')
-  assert.ok(view.find({ text: 'Nothing matches “nothing here”' }), 'the same search on Terminals')
+  assert.ok(view.find({ label: 'Nothing matches “nothing here”' }), 'the same search on Terminals')
+  await view.press({ text: 'Clear search' })
+  assert.equal(view.find({ label: 'Find' })?.props.value, '', 'the way out is right there')
+  assert.ok(view.find({ type: 'Text', text: 'sonix_docs' }))
   await view.type({ label: 'Find' }, 'toy', { replace: true })
   assert.ok(view.find({ type: 'Text', text: 'toy' }))
   assert.equal(view.find({ type: 'Text', text: 'sonix_docs' }), null)
@@ -444,14 +447,18 @@ test('after saving, the Schedules tab shows that terminal open — a search that
   const saved: ScheduleDraft[] = []
   const view = await mount(panel, { host: host({ saved }) })
   const s: Schedule = { ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] } }
-  await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ label: 'Collapse' })
+  const other: Schedule = { ...blankSchedule('s2'), name: 'Other', terminal: { ...open[1] } }
+  await view.post('schedules.changed', { schedules: [s, other] })
+  await view.press(view.findAll({ label: 'Collapse' })[0])
   await view.select({ type: 'Tabs' }, 'terminals')
   await view.press(view.findAll({ label: 'New schedule for this terminal' })[0])
   await view.type({ label: 'Name' }, 'Nightly')
   await view.type({ label: 'Prompt' }, 'Wrap up')
   await view.press({ text: 'Create schedule' })
   assert.equal(saved[0].terminal.handle, 'h1')
+  // findAll keeps the innermost matches, so the row's outer box is counted in the drawn tree.
+  const tinted = JSON.stringify(view.tree()).split('"background":"success"').length - 1
+  assert.equal(tinted, 1, 'the saved one is tinted for a moment')
   assert.equal(view.find({ type: 'Tabs' })?.props.value, 'schedules', 'not left on Terminals')
   assert.ok(view.find({ label: 'Morning report' }), 'its block is open again')
   await view.type({ label: 'Find' }, 'nothing like it')
@@ -659,7 +666,7 @@ test('a run being sent spins; before the first answer both tabs show a placehold
   assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }), 'not "No schedules yet" yet')
   assert.equal(early.find({ label: 'No schedules yet' }), null)
   await early.select({ type: 'Tabs' }, 'terminals')
-  assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }))
+  assert.ok(early.find({ type: 'Text', text: 'sonix_docs' }), 'entering Terminals reads the list itself')
   await early.unmount()
 })
 
@@ -688,21 +695,39 @@ test('a new send opens its terminal’s sent group, which stays open when it end
 })
 
 test('no agent terminal — the Terminals tab and the form say how to get one, with a reload', async () => {
-  let reads = 0
+  let none = true
   const view = await mount(panel, {
     host: mockHost({
       storage: { onboarded: true } as never,
-      requests: { 'schedules.list': () => [], 'terminals.list': () => (reads++ === 0 ? [] : open) }
+      requests: { 'schedules.list': () => [], 'terminals.list': () => (none ? [] : open) }
     })
   })
   await view.select({ type: 'Tabs' }, 'terminals')
   const empty = view.find({ label: 'No agent terminals are open in Orca' })
   assert.equal(empty?.props.description, 'Run claude, codex or gemini in an Orca terminal and it shows up here.')
+  none = false // claude started in a terminal meanwhile
   await view.press({ type: 'Button', text: 'Reload terminals' })
-  assert.equal(reads, 2, 'read again')
-  assert.ok(view.find({ label: 'Claude Code — Show this terminal in Orca' }), 'and the one just started shows up')
-  reads = 0 // the form reads the list again — empty this time
+  assert.ok(view.find({ label: 'Claude Code — Show this terminal in Orca' }), 'the one just started shows up')
+  none = true // the form reads the list again — empty this time
   await view.press({ type: 'IconButton', label: 'New schedule' })
   assert.ok(view.find({ label: 'No agent terminals are open in Orca' }), 'the picker says the same')
+  await view.unmount()
+})
+
+test('entering the Terminals tab reads the list afresh; the Schedules tab does not', async () => {
+  let reads = 0
+  const view = await mount(panel, {
+    host: mockHost({
+      storage: { onboarded: true } as never,
+      requests: { 'schedules.list': () => [], 'terminals.list': () => (reads++, open) }
+    })
+  })
+  assert.equal(reads, 1, 'once on open')
+  await view.select({ type: 'Tabs' }, 'terminals')
+  assert.equal(reads, 2)
+  await view.select({ type: 'Tabs' }, 'schedules')
+  assert.equal(reads, 2, 'nothing to read there')
+  await view.select({ type: 'Tabs' }, 'terminals')
+  assert.equal(reads, 3)
   await view.unmount()
 })

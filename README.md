@@ -6,7 +6,7 @@ The panel follows Orca's language: Korean when Orca is in Korean, English otherw
 
 ## Target — a terminal you pick
 
-A schedule belongs to one terminal you already have open, in any workspace. The terminal list in the form shows only terminals where Orca sees an agent running: the terminal title, then the workspace and the agent. A plain shell is never offered and never sent to.
+A schedule belongs to one terminal you already have open, in any workspace. The terminal list in the form shows only terminals where Orca sees an agent running: the terminal title, then the workspace and the agent. A plain shell is never offered and never sent to. Opened from a terminal line, Edit or Duplicate, the form shows that terminal on one line with **Change**; the list opens only when you press it, and folds again once you pick.
 
 - Orca restarts give terminals new handles. The schedule finds its terminal again by its pane. A terminal that was closed shows as `not open`; the run waits, and you pick another terminal by editing the schedule.
 - **Start a new conversation** sends `/clear` first, then the prompt once the screen settles. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
@@ -46,7 +46,7 @@ Sending uses `orca terminal send --terminal <handle> --text <prompt> --enter --w
 | Time | Set times (up to 24) or every N minutes (1–720), all day or between two times |
 | Cron | Five fields, or six with a year; several expressions joined by `;` |
 
-The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`) and keeps Create disabled while a field is wrong. A schedule saved as cron that the form can express reopens in the form.
+The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`). Create stays off until the form is complete, with the first missing field named above it (name, terminal, time, prompt). After saving, the panel shows the Schedules tab with that terminal's block open. A schedule saved as cron that the form can express reopens in the form.
 
 ## Screens — side panel laid out like Orca's own sidebars
 
@@ -58,7 +58,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Tabs and search | **Schedules N** and **Terminals N**. The search box under them filters both, by terminal title, workspace, agent or schedule name |
 | Schedules | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal |
 | Terminal line | Agent icon (Claude Code ★, Codex `>_`, Gemini CLI ⚡), a green dot while the terminal is open, workspace and title. Pressing the workspace or the icon brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal**. A block folds to one line: `2 schedules · next tomorrow 09:00` |
-| Schedule in a block | Switch with the name; send now, edit, duplicate, delete (Undo for 8 seconds); next run and the rule; last result, a warning when it waits on a person, and the history |
+| Schedule in a block | Switch with the name; next run and the rule, then send now, edit, duplicate, delete (Undo for 8 seconds); last result and the history. A run waiting its turn shows why in grey; an orange warning appears only when a person must act (the same ones counted on top and in the status bar) |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; the newest 20 finished ones are kept |
 | Terminals | Every open agent terminal, each on the same line as above |
 | Settings | Language (same as Orca, English or Korean) and how sending works |

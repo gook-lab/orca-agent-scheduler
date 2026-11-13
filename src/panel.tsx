@@ -121,6 +121,8 @@ const emptyDraft = (): Draft => ({
 })
 const draft = atom<Draft>(emptyDraft())
 const formOpen = atom(false)
+/** The form's terminal list is open — it starts folded to one line when the form came with a terminal. */
+const pickerOpen = atom(false)
 const formError = atom<string | null>(null)
 const saving = atom(false)
 
@@ -147,6 +149,7 @@ function openForm(d: Draft): void {
     set(month, { y, m })
   } else set(month, thisMonth())
   set(formError, null)
+  set(pickerOpen, !d.handle)
   set(formOpen, true)
   void refreshTerminals()
 }
@@ -285,7 +288,7 @@ async function save(): Promise<void> {
   if (!terminal) return set(formError, words(l).error.terminal)
   set(saving, true)
   try {
-    await plugin.request('schedules.save', {
+    const saved = await plugin.request('schedules.save', {
       ...(d.id ? { id: d.id } : {}),
       ...(d.once ? { once: true } : {}),
       name: d.name,
@@ -296,11 +299,21 @@ async function save(): Promise<void> {
       clearFirst: d.clearFirst
     })
     closeForm()
+    showSaved(saved)
   } catch (error) {
     set(formError, (error as Error).message)
   } finally {
     set(saving, false)
   }
+}
+
+/** After saving, show where it went: the Schedules tab with that terminal's block open, and a search
+ *  that would hide it cleared. Saved from the Terminals tab, the result was otherwise out of sight. */
+function showSaved(s: Schedule): void {
+  set(tab, 'schedules')
+  update(collapsed, (keys) => keys.filter((k) => k !== s.terminal.leafId && k !== s.terminal.handle))
+  const q = read(query).trim().toLowerCase()
+  if (!matches(q, [s.name, ...terminalTexts(s.terminal)])) set(query, '')
 }
 
 const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'warning' | 'neutral' | 'accent' =>
@@ -439,6 +452,9 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
   const last = s.history[0]
   const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null)
   const noteLine = note ? noteText(l, note) : !live && read(terminals) !== null ? u.terminalGone : null
+  // Orange only for what the count on top and the status bar call "need attention"; a run that is just
+  // waiting its turn stays grey.
+  const urgent = needsAttention(s)
   const nextText = s.enabled ? (s.nextRunAt !== null ? `${u.next} ${whenText(l, s.nextRunAt)}` : u.never) : u.off
   return (
     <Box border radius="md" padding="sm" gap="xs">
@@ -470,10 +486,14 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
           </Text>
         </Row>
       ) : null}
-      {noteLine ? (
+      {noteLine && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
           {noteLine}
         </Callout>
+      ) : noteLine ? (
+        <Text size="xs" muted>
+          {note ? `${u.waitingToSend} · ${noteLine}` : noteLine}
+        </Text>
       ) : null}
       {s.history.length > 1 ? (
         <Collapsible title={u.history(s.history.length)}>
@@ -521,8 +541,12 @@ function SentList({ list }: { list: Schedule[] }) {
               <Text size="xs" muted>
                 {whenText(l, at(s))}
               </Text>
-              {note ? (
+              {note && needsAttention(s) ? (
                 <Text size="xs" tone="warning">
+                  {noteText(l, note)}
+                </Text>
+              ) : note ? (
+                <Text size="xs" muted>
                   {noteText(l, note)}
                 </Text>
               ) : null}
@@ -815,12 +839,15 @@ function TimeFields() {
 
 // ───────────────────────── Form — new · edit · send once ─────────────────────────
 
-/** Terminals as a list inside the panel — a Select's popup grows to its longest label and spills past
- *  the panel. Scrolls after a few rows. */
+/** The terminal: one line with Change when the form came with one, or a list inside the panel to pick
+ *  from (a Select's popup grows to its longest label and spills past the panel). The list scrolls after a
+ *  few rows and folds again once a terminal is picked. */
 function TerminalPicker({ selected, missing, onPick }: { selected: string; missing: TerminalRef | null; onPick: (handle: string) => void }) {
   const u = words(read(lang)).ui
   const open = read(terminals)
-  const item = (t: TerminalRef, live: boolean) => {
+  const chosen = missing ?? (open ?? []).find((t) => t.handle === selected) ?? null
+  const expanded = read(pickerOpen) || !chosen
+  const item = (t: TerminalRef, live: boolean, pick: boolean) => {
     const kind = agentKind(t.agent)
     return (
       <ListItem
@@ -828,29 +855,42 @@ function TerminalPicker({ selected, missing, onPick }: { selected: string; missi
         icon={kind ? agentIcon[kind] : 'agent'}
         title={t.title || t.workspace}
         description={[t.workspace, kind ? agentName[kind] : t.agent, live ? '' : u.notOpen].filter(Boolean).join(' · ')}
-        current={t.handle === selected}
+        current={pick && t.handle === selected}
         disabled={!live}
-        onPress={() => onPick(t.handle)}
+        onPress={pick ? () => onPick(t.handle) : undefined}
       />
     )
   }
   return (
     <Stack gap="xs">
-      <Box direction="row" align="center" justify="between">
-        <Text size="sm" weight="medium">
-          {u.terminal}
-        </Text>
-        <IconButton icon="refresh" size="xs" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+      <Box direction="row" align="center" gap="xs">
+        <Box grow>
+          <Text size="sm" weight="medium">
+            {u.terminal}
+          </Text>
+        </Box>
+        {expanded ? (
+          <IconButton icon="refresh" size="xs" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+        ) : (
+          <Button size="xs" variant="ghost" onPress={() => set(pickerOpen, true)}>
+            {u.change}
+          </Button>
+        )}
+        {expanded && chosen ? <IconButton icon="collapse" size="xs" variant="ghost" label={u.collapse} onPress={() => set(pickerOpen, false)} /> : null}
       </Box>
-      {open !== null && open.length === 0 && !missing ? (
+      {!expanded && chosen ? (
+        <Box border radius="md">
+          <List label={u.terminal}>{item(chosen, !missing, false)}</List>
+        </Box>
+      ) : open !== null && open.length === 0 && !missing ? (
         <Text size="xs" muted>
           {u.noTerminals}
         </Text>
       ) : (
         <Box border radius="md" maxHeight={240} scroll="y">
           <List label={u.terminal}>
-            {missing ? item(missing, false) : null}
-            {(open ?? []).map((t) => item(t, true))}
+            {missing ? item(missing, false, true) : null}
+            {(open ?? []).map((t) => item(t, true, true))}
           </List>
         </Box>
       )}
@@ -877,7 +917,19 @@ function Form() {
     if (day === 'cron' && c && 'cron' in c) p.cron = c.cron
     patch(p)
   }
-  const blocked = read(saving) || !d.handle || (c !== null && 'error' in c) || (d.once && !d.prompt.trim())
+  // The first thing still missing, in the order of the fields; Create stays off and says why.
+  const e = words(l).error
+  const reason =
+    !d.once && !d.name.trim()
+      ? e.name
+      : !d.handle
+        ? e.terminal
+        : c !== null && 'error' in c
+          ? c.error
+          : !d.prompt.trim()
+            ? e.prompt
+            : null
+  const blocked = read(saving) || reason !== null
   return (
     <Stack gap="sm">
       <Box direction="row" align="center" gap="xs">
@@ -892,7 +944,14 @@ function Form() {
         placeholder={d.once ? u.namePlaceholderOnce : u.namePlaceholder}
         onChange={(name) => patch({ name })}
       />
-      <TerminalPicker selected={d.handle} missing={missing} onPick={(handle) => patch({ handle })} />
+      <TerminalPicker
+        selected={d.handle}
+        missing={missing}
+        onPick={(handle) => {
+          patch({ handle })
+          set(pickerOpen, false)
+        }}
+      />
       <Checkbox label={u.clearFirst} description={u.clearFirstHint} checked={d.clearFirst} onChange={(clearFirst) => patch({ clearFirst })} />
       {c === null ? null : (
         <Stack gap="sm">
@@ -913,6 +972,11 @@ function Form() {
       {d.once ? (
         <Text muted size="xs">
           {u.sendHint}
+        </Text>
+      ) : null}
+      {reason ? (
+        <Text size="xs" muted>
+          {reason}
         </Text>
       ) : null}
       {read(formError) ? (

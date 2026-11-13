@@ -61,13 +61,21 @@ test('English by default — empty state, then a schedule on a picked terminal',
   assert.ok(view.find({ label: 'No schedules yet' }))
   await fillBasics(view)
   assert.deepEqual(
-    view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.description, e.props.icon, e.props.current]),
-    [
-      ['Morning', 'sonix_docs · Claude Code', 'star', false],
-      ['Review', 'toy · Codex', 'terminal', true]
-    ],
-    'terminals listed in the panel, the picked one marked'
+    view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.description, e.props.icon]),
+    [['Review', 'toy · Codex', 'terminal']],
+    'picked from the list, then folded to one line'
   )
+  await view.press({ type: 'Button', text: 'Change' })
+  assert.deepEqual(
+    view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.current]),
+    [
+      ['Morning', false],
+      ['Review', true]
+    ],
+    'Change opens the list with the picked one marked'
+  )
+  await view.press({ type: 'ListItem', label: 'Review' })
+  assert.equal(view.findAll({ type: 'ListItem' }).length, 1, 'picking folds it again')
   assert.equal(view.find({ type: 'Select', label: 'Terminal' }), null, 'no popup to spill past the panel')
   await view.type({ label: 'Time 1' }, '9:30', { replace: true })
   await view.press({ text: 'Add time' })
@@ -193,6 +201,7 @@ test('counts on top — schedules, on, waiting, attention, runs today — and wh
   const off: Schedule = { ...blankSchedule('s3'), name: 'Paused', terminal: { ...open[1] }, enabled: false }
   await view.post('schedules.changed', { schedules: [morning, stuck, off] })
   for (const text of ['3 schedules', '2 on', '1 waiting', '1 need attention', '1 run today']) assert.ok(view.find({ text }), text)
+  assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 1, 'orange only for the one counted')
   assert.ok(view.find({ text: 'Next today 23:59 · Morning report' }))
   await view.unmount()
 })
@@ -212,9 +221,9 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   }
   const gone: Schedule = { ...blankSchedule('s2'), name: 'Old', terminal: { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, prompt: 'x' }
   await view.post('schedules.changed', { schedules: [running, gone] })
-  assert.ok(view.find({ text: /Screen changed in the last minute/ }), 'wait reason under the warning title')
+  assert.ok(view.find({ text: 'Waiting to send · Screen changed in the last minute (working or typing)' }), 'an ordinary wait stays grey')
   assert.ok(view.find({ text: /This terminal is not open/ }))
-  assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 2, 'warning title in English')
+  assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
   assert.ok(view.find({ text: 'Done' }))
   assert.ok(view.find({ text: /took 3 min/ }))
   assert.equal(view.find({ type: 'Button', text: 'toy' })?.props.disabled, true, 'a closed terminal cannot be shown')
@@ -283,9 +292,11 @@ test('send once from a terminal line — no days or times, the name may stay emp
   const sendButtons = view.findAll({ label: 'Send once' })
   assert.equal(sendButtons.length, 3)
   await view.press(sendButtons[2])
-  assert.equal(view.find({ type: 'ListItem', label: 'Review' })?.props.current, true, 'that terminal picked')
+  assert.deepEqual(view.findAll({ type: 'ListItem' }).map((e) => e.label), ['Review'], 'the terminal it came from, on one line')
+  assert.ok(view.find({ type: 'Button', text: 'Change' }))
   assert.equal(view.find({ label: 'Days' }), null)
   assert.equal(view.find({ text: 'Send' })?.props.disabled, true, 'no prompt yet')
+  assert.ok(view.find({ text: 'Enter the prompt to send' }), 'and it says so')
   await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
   await view.press({ text: 'Send' })
   assert.equal(saved.length, 1)
@@ -351,11 +362,16 @@ test('editing a schedule on a closed terminal keeps that terminal first, marked 
   const s: Schedule = { ...blankSchedule('s1'), name: 'Release', terminal: gone, prompt: 'Ship it' }
   await view.post('schedules.changed', { schedules: [s] })
   await view.press({ label: 'Edit' })
+  const line = view.findAll({ type: 'ListItem' })
+  assert.equal(line.length, 1, 'folded to the saved terminal')
+  assert.equal(line[0].label, 'Old docs')
+  assert.equal(line[0].disabled, true)
+  assert.match(String(line[0].props.description), /not open/)
+  await view.press({ type: 'Button', text: 'Change' })
   const first = view.findAll({ type: 'ListItem' })[0]
-  assert.equal(first.label, 'Old docs')
+  assert.equal(first.label, 'Old docs', 'first in the list')
   assert.equal(first.props.current, true)
   assert.equal(first.disabled, true)
-  assert.match(String(first.props.description), /not open/)
   await view.press({ text: 'Save' })
   assert.deepEqual(saved[0].terminal, gone, 'saving without picking keeps the old terminal')
   await view.unmount()
@@ -377,5 +393,68 @@ test('editing reopens the form as saved — dates on their month', async () => {
   await view.press({ text: 'Save' })
   assert.equal(saved[0].cron, `0 9 20,25 ${m} * ${y}`)
   assert.equal(saved[0].id, 's1')
+  await view.unmount()
+})
+
+test('Create stays off and says why — the first missing field, in form order', async () => {
+  const view = await mount(panel, { host: host() })
+  await view.press({ type: 'IconButton', label: 'New schedule' })
+  const off = () => view.find({ text: 'Create schedule' })?.props.disabled
+  assert.ok(view.find({ text: 'Enter a name' }))
+  assert.equal(off(), true)
+  await view.type({ label: 'Name' }, 'Nightly')
+  assert.ok(view.find({ text: /^Pick an agent terminal/ }))
+  assert.equal(off(), true)
+  await view.press({ type: 'ListItem', label: 'Review' })
+  assert.ok(view.find({ text: 'Enter the prompt to send' }))
+  assert.equal(off(), true)
+  await view.type({ label: 'Prompt' }, 'Wrap up')
+  assert.equal(view.find({ text: 'Enter the prompt to send' }), null)
+  assert.equal(off(), false)
+  await view.unmount()
+})
+
+test('after saving, the Schedules tab shows that terminal open — a search that would hide it is cleared', async () => {
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ saved }) })
+  const s: Schedule = { ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] } }
+  await view.post('schedules.changed', { schedules: [s] })
+  await view.press({ label: 'Collapse' })
+  await view.select({ type: 'Tabs' }, 'terminals')
+  await view.press(view.findAll({ label: 'New schedule for this terminal' })[0])
+  await view.type({ label: 'Name' }, 'Nightly')
+  await view.type({ label: 'Prompt' }, 'Wrap up')
+  await view.press({ text: 'Create schedule' })
+  assert.equal(saved[0].terminal.handle, 'h1')
+  assert.equal(view.find({ type: 'Tabs' })?.props.value, 'schedules', 'not left on Terminals')
+  assert.ok(view.find({ label: 'Morning report' }), 'its block is open again')
+  await view.type({ label: 'Find' }, 'nothing like it')
+  await fillBasics(view)
+  await view.press({ text: 'Create schedule' })
+  assert.equal(view.find({ label: 'Find' })?.props.value, '', 'the search hid it, so it is cleared')
+  await view.type({ label: 'Find' }, 'toy')
+  await fillBasics(view)
+  await view.press({ text: 'Create schedule' })
+  assert.equal(view.find({ label: 'Find' })?.props.value, 'toy', 'a search that still shows it stays')
+  await view.unmount()
+})
+
+test('a one-off waiting its turn is grey; one stuck on a closed terminal is orange', async () => {
+  const view = await mount(panel, { host: host() })
+  const once = (id: string, t: TerminalOption, code: 'moving' | 'missing'): Schedule => ({
+    ...blankSchedule(id),
+    once: true,
+    name: id,
+    terminal: { ...t },
+    cron: '',
+    pendingSince: Date.now(),
+    waitNote: { code }
+  })
+  await view.post('schedules.changed', { schedules: [once('o1', open[0], 'moving'), once('o2', { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, 'missing')] })
+  const moving = view.find({ text: 'Screen changed in the last minute (working or typing)' })
+  assert.equal(moving?.props.tone, undefined)
+  assert.equal(moving?.props.muted, true)
+  assert.equal(view.find({ text: 'Terminal is not open — waiting for it' })?.props.tone, 'warning')
+  assert.ok(view.find({ text: '1 need attention' }), 'the orange one is the one counted')
   await view.unmount()
 })

@@ -19,7 +19,8 @@ type HostOpts = {
 function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
   const list = opts.terminals ?? open
   return mockHost({
-    storage: (opts.storage ?? {}) as never,
+    // Past the introduction unless a test says otherwise.
+    storage: { onboarded: true, ...opts.storage } as never,
     requests: {
       'schedules.list': () => [],
       'terminals.list': () => list,
@@ -556,3 +557,60 @@ test('favorites go first on both tabs and are kept in storage', async () => {
   await again.unmount()
 })
 
+
+test('first open — three pages of introduction, then the Terminals tab when nothing is scheduled', async () => {
+  const view = await mount(panel, { host: host({}, { storage: { onboarded: undefined } }) })
+  assert.ok(view.find({ label: 'Prompts on a schedule' }), 'page 1 in place of the list')
+  assert.ok(view.find({ text: '1 / 3' }))
+  assert.equal(view.find({ type: 'Tabs' }), null, 'no list behind it')
+  assert.equal(view.find({ text: '‹ Back' }), null, 'nothing before page 1')
+  await view.press({ text: 'Next' })
+  assert.ok(view.find({ label: 'Only when the terminal is free' }))
+  await view.press({ text: '‹ Back' })
+  assert.ok(view.find({ label: 'Prompts on a schedule' }))
+  await view.press({ text: 'Next' })
+  await view.press({ text: 'Next' })
+  assert.ok(view.find({ label: 'Start from a terminal' }))
+  assert.equal(view.find({ text: 'Skip' }), null, 'the last page only starts')
+  await view.press({ text: 'Get started' })
+  assert.equal(view.host.data().storage.onboarded, true, 'shown once')
+  assert.equal(view.find({ type: 'Tabs' })?.props.value, 'terminals', 'where a schedule starts')
+  await view.unmount()
+  const again = await mount(panel, { host: host({}, { storage: { onboarded: true } }) })
+  assert.equal(again.find({ label: 'Prompts on a schedule' }), null, 'not again')
+  await again.unmount()
+})
+
+test('Skip ends the introduction at once; Settings opens it again, back to the same tab', async () => {
+  const view = await mount(panel, { host: host({}, { storage: { onboarded: undefined } }) })
+  await view.post('schedules.changed', { schedules: [{ ...blankSchedule('a'), name: 'Morning report', terminal: { ...open[0] } }] })
+  await view.press({ text: 'Skip' })
+  assert.equal(view.host.data().storage.onboarded, true)
+  assert.equal(view.find({ type: 'Tabs' })?.props.value, 'schedules', 'something is scheduled — stay on it')
+  await view.press({ label: 'Settings' })
+  await view.press({ text: 'Show the introduction again' })
+  assert.ok(view.find({ label: 'Prompts on a schedule' }))
+  await view.press({ text: 'Skip' })
+  assert.ok(view.find({ label: 'Morning report' }), 'back to the list, not Settings')
+  await view.unmount()
+})
+
+test('the empty list is one line and a button; how sending works opens under the list', async () => {
+  const view = await mount(panel, { host: host() })
+  const empty = view.find({ label: 'No schedules yet' })
+  assert.equal(empty?.props.description, 'Press + on a terminal in the Terminals tab to start.')
+  const rule = /^Checks every 30 seconds/
+  assert.equal(view.find({ text: rule }), null, 'the rule is not spelled out up front')
+  await view.press({ text: 'How sending works' })
+  assert.ok(titled(view, 'Callout', 'How sending works'))
+  assert.ok(view.find({ text: rule }))
+  await view.press({ text: 'Show the introduction again' })
+  assert.ok(view.find({ label: 'Prompts on a schedule' }))
+  await view.press({ text: 'Skip' })
+  assert.ok(view.find({ label: 'No schedules yet' }), 'opened again, it returns to where it was')
+  await view.press({ type: 'Button', text: 'How sending works' })
+  assert.equal(titled(view, 'Callout', 'How sending works'), null, 'pressed again, it closes')
+  await view.press({ text: 'Open Terminals' })
+  assert.equal(view.find({ type: 'Tabs' })?.props.value, 'terminals')
+  await view.unmount()
+})

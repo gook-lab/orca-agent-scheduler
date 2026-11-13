@@ -84,7 +84,8 @@ const schedules = [
 ]
 
 export default defineCheck({
-  empty: { results },
-  busy: { results, storage: { schedules } },
-  korean: { results, storage: { schedules, langPref: 'ko' } }
+  first: { results },
+  empty: { results, storage: { onboarded: true } },
+  busy: { results, storage: { onboarded: true, schedules } },
+  korean: { results, storage: { onboarded: true, schedules, langPref: 'ko' } }
 })

@@ -83,8 +83,8 @@ const en = {
     newSchedule: 'New schedule',
     editSchedule: 'Edit schedule',
     emptyTitle: 'No schedules yet',
-    emptyDescription:
-      'Press + at the top, or + on an agent terminal (Claude Code, Codex, Gemini CLI) in Terminals, and pick a time. At that time, once the terminal is idle, the prompt is sent to it.',
+    emptyDescription: 'Press + on a terminal in the Terminals tab to start.',
+    openTerminals: 'Open Terminals',
     footer:
       'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped.',
     language: 'Language',
@@ -165,7 +165,28 @@ const en = {
     actions: 'Actions',
     settings: 'Settings',
     langAuto: (name: string) => `Same as Orca (${name})`,
-    howItWorks: 'How it works',
+    help: 'How sending works',
+    showIntro: 'Show the introduction again',
+    intro: {
+      steps: [
+        {
+          title: 'Prompts on a schedule',
+          body: 'Pick an agent terminal — Claude Code, Codex or Gemini CLI — and a time. At that time the prompt goes into the terminal as if you typed it.'
+        },
+        {
+          title: 'Only when the terminal is free',
+          body: 'It waits until the screen has been quiet for a minute and the input box is empty. After 60 minutes of waiting, that run is skipped.'
+        },
+        {
+          title: 'Start from a terminal',
+          body: 'On the Terminals tab, + makes a schedule and › sends a prompt once. ☆ keeps a terminal on top.'
+        }
+      ],
+      step: (n: number, of: number) => `${n} / ${of}`,
+      skip: 'Skip',
+      next: 'Next',
+      start: 'Get started'
+    },
     duplicate: 'Duplicate',
     copyOf: (name: string) => `${name} copy`,
     deleted: (name: string) => `Deleted “${name}”`,
@@ -256,8 +277,8 @@ const ko: Words = {
     newSchedule: '새 예약',
     editSchedule: '예약 고치기',
     emptyTitle: '예약이 없습니다',
-    emptyDescription:
-      '위의 + 나 「터미널」 탭에서 에이전트 터미널(Claude Code·Codex·Gemini CLI) 줄의 + 를 눌러 시각을 고르면, 그 시각에 터미널이 비어 있을 때 글을 보냅니다.',
+    emptyDescription: '「터미널」 탭에서 터미널 줄의 + 를 눌러 시작하세요.',
+    openTerminals: '터미널 보기',
     footer:
       'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다.',
     language: '언어',
@@ -338,7 +359,28 @@ const ko: Words = {
     actions: '동작',
     settings: '설정',
     langAuto: (name) => `Orca 와 같게(${name})`,
-    howItWorks: '동작 방식',
+    help: '보내는 방식',
+    showIntro: '소개 다시 보기',
+    intro: {
+      steps: [
+        {
+          title: '정한 시각에 프롬프트 보내기',
+          body: '에이전트 터미널(Claude Code·Codex·Gemini CLI)과 시각을 고르면, 그 시각에 그 터미널에 글을 대신 입력해 보냅니다.'
+        },
+        {
+          title: '터미널이 비어 있을 때만',
+          body: '화면이 1분 동안 조용하고 입력 칸이 비었을 때 보냅니다. 60분을 기다려도 안 되면 그 회차는 건너뜁니다.'
+        },
+        {
+          title: '터미널에서 시작',
+          body: '「터미널」 탭에서 + 는 예약, › 는 한 번 보내기입니다. ☆ 를 누르면 그 터미널이 맨 위에 옵니다.'
+        }
+      ],
+      step: (n, of) => `${n} / ${of}`,
+      skip: '건너뛰기',
+      next: '다음',
+      start: '시작하기'
+    },
     duplicate: '복제',
     copyOf: (name) => `${name} 사본`,
     deleted: (name) => `「${name}」 지움`,

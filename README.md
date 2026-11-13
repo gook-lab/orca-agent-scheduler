@@ -54,15 +54,17 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 
 | Part | What it shows and does |
 |---|---|
+| Introduction | The first time the panel opens, three short pages take the place of the list: prompts on a schedule, only when the terminal is free, start from a terminal. Skip or Get started ends it for good; when nothing is scheduled yet, it lands on the Terminals tab. Settings and the help under the list open it again |
 | Title row | **Agent Scheduler**, then New schedule (+), Send once (›), Reload terminals (a spinner while the list is read) and Settings |
 | Tabs and search | **Schedules N** and **Terminals N**. The search box under them filters both, by terminal title, workspace, agent or schedule name |
-| Schedules | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal |
+| Schedules | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal. With nothing scheduled, one line and an **Open Terminals** button |
+| How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; quiet for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |
 | Schedule in a block | Switch with the name; next run and the rule, then send now, edit, duplicate, delete (Undo for 8 seconds, in the deleted schedule's place); last result and the history. A run waiting its turn shows why in grey; an orange warning appears only when a person must act (the same ones counted on top and in the status bar) |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; the newest 20 finished ones are kept |
 | Terminals | Every open agent terminal, each on the same line as above. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
 | Favorites | Favorite terminals go first on both tabs; kept across Orca restarts by pane |
-| Settings | Language (same as Orca, English or Korean) and how sending works |
+| Settings | Language (same as Orca, English or Korean) and Show the introduction again |
 
 A closed terminal keeps its block, greyed out, with its last known agent; its schedules wait until it is open again or you pick another terminal in Edit.
 

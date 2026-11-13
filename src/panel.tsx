@@ -79,6 +79,13 @@ const favorites = atom<string[]>([])
 const FAVORITES_KEY = 'favorites'
 /** The terminal list is being read — the reload button turns into a spinner. */
 const refreshing = atom(false)
+/** The introduction was finished or skipped; until then it opens in place of the list. Set once, never
+ *  toggled — a persisted atom flipped back and forth by presses misbehaved. */
+const onboarded = atom('onboarded', false, { persist: 'storage' })
+/** The introduction's page, when opened again from Settings. */
+const introStep = atom<number | null>(null)
+/** How sending works, opened under the list. */
+const helpOpen = atom(false)
 
 /** The plugin's name — the same in every language. */
 const TITLE = 'Agent Scheduler'
@@ -742,9 +749,11 @@ function SchedulesView() {
   if (list.length === 0 && !gone)
     return (
       <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription}>
-        <Text size="xs" muted>
-          {u.footer}
-        </Text>
+        <Row>
+          <Button size="sm" variant="outline" icon="terminal" onPress={() => set(tab, 'terminals')}>
+            {u.openTerminals}
+          </Button>
+        </Row>
       </EmptyState>
     )
   const q = read(query).trim().toLowerCase()
@@ -1184,14 +1193,96 @@ function Settings() {
         ]}
         onChange={pick}
       />
-      <Stack gap="xs">
-        <Text size="sm" weight="medium">
-          {u.howItWorks}
-        </Text>
+      <Row>
+        <Button
+          size="sm"
+          variant="outline"
+          icon="info"
+          onPress={() => {
+            set(settingsOpen, false)
+            set(introStep, 0)
+          }}
+        >
+          {u.showIntro}
+        </Button>
+      </Row>
+    </Stack>
+  )
+}
+
+// ───────────────────────── Introduction · help ─────────────────────────
+
+const introIcons: IconName[] = ['calendar', 'gauge', 'terminal']
+
+/** Three pages on the first open (and from Settings): what it does, when it sends, where to start. */
+function Intro() {
+  const u = words(read(lang)).ui
+  const steps = u.intro.steps
+  const i = Math.min(read(introStep) ?? 0, steps.length - 1)
+  const last = i === steps.length - 1
+  const finish = () => {
+    // First time and nothing scheduled — the place to start is a terminal. Opened again, it returns
+    // to where it was.
+    if (!read(onboarded) && read(schedules).length === 0) set(tab, 'terminals')
+    set(onboarded, true)
+    set(introStep, null)
+  }
+  return (
+    <Stack gap="md">
+      <Box direction="row" align="center" gap="xs">
+        <Box grow shrink minWidth={0}>
+          <Text size="sm" weight="semibold" truncate>
+            {TITLE}
+          </Text>
+        </Box>
         <Text size="xs" muted>
-          {u.footer}
+          {u.intro.step(i + 1, steps.length)}
         </Text>
-      </Stack>
+      </Box>
+      <EmptyState icon={introIcons[i]} title={steps[i].title} description={steps[i].body} />
+      <Box direction="row" align="center" gap="xs">
+        {i > 0 ? (
+          <Button size="sm" variant="ghost" onPress={() => set(introStep, i - 1)}>
+            {`‹ ${u.back}`}
+          </Button>
+        ) : null}
+        <Box grow />
+        {last ? null : (
+          <Button size="sm" variant="ghost" onPress={finish}>
+            {u.intro.skip}
+          </Button>
+        )}
+        <Button size="sm" variant="solid" tone="accent" onPress={last ? finish : () => set(introStep, i + 1)}>
+          {last ? u.intro.start : u.intro.next}
+        </Button>
+      </Box>
+    </Stack>
+  )
+}
+
+/** ⓘ under the list; pressing it opens the rule for sending in place, pressing again closes it. */
+function Help() {
+  const u = words(read(lang)).ui
+  const open = read(helpOpen)
+  return (
+    <Stack gap="xs">
+      <Row>
+        <Button size="xs" variant="ghost" icon="info" onPress={() => set(helpOpen, !open)}>
+          {u.help}
+        </Button>
+      </Row>
+      {open ? (
+        <Callout tone="neutral" icon="info" title={u.help}>
+          <Stack gap="xs">
+            <Text size="xs">{u.footer}</Text>
+            <Row>
+              <Button size="xs" variant="ghost" onPress={() => set(introStep, 0)}>
+                {u.showIntro}
+              </Button>
+            </Row>
+          </Stack>
+        </Callout>
+      ) : null}
     </Stack>
   )
 }
@@ -1199,6 +1290,7 @@ function Settings() {
 // ───────────────────────── Panel ─────────────────────────
 
 export default function Panel() {
+  if (!read(onboarded) || read(introStep) !== null) return <Intro />
   if (read(formOpen)) return <Form />
   if (read(settingsOpen)) return <Settings />
   return (
@@ -1206,6 +1298,7 @@ export default function Panel() {
       <Header />
       <Nav />
       {read(tab) === 'terminals' ? <TerminalsView /> : <SchedulesView />}
+      <Help />
     </Stack>
   )
 }

@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { agentKind, permissionPrompt, promptState } from './screen'
+import { agentKind, permissionPrompt, promptState, promptVisible } from './screen'
 
 const rule = '──────────────────────────────'
 
@@ -39,6 +39,22 @@ test('Codex 입력 칸', () => {
   assert.ok(!permissionPrompt(codexIdle))
 })
 
+test('Claude Code 질문 창 — 선택 안내 줄이 화면 끝에 있을 때만', () => {
+  // 질문 도구 실화면(2026-11-13 실기 시험 3)
+  const question = [
+    '  1. 예',
+    '  2. 아니오',
+    '     아니오',
+    '  3. Type something.',
+    rule,
+    '  4. Chat about this',
+    'Enter to select · ↑/↓ to navigate · Esc to cancel'
+  ]
+  assert.ok(permissionPrompt(question))
+  assert.equal(promptState(question), 'unknown')
+  assert.ok(!permissionPrompt([...question, '⏺ 답을 받았습니다', '', '', rule, '❯ ', rule]), '지나간 안내 줄은 아님')
+})
+
 test('Gemini CLI 입력 칸', () => {
   const box = '╭──────────────────────────────╮'
   const end = '╰──────────────────────────────╯'
@@ -54,4 +70,13 @@ test('에이전트 종류', () => {
   assert.equal(agentKind('Gemini'), 'gemini')
   assert.equal(agentKind(null), null)
   assert.equal(agentKind('opencode'), null)
+})
+
+test('보낸 글이 화면에 보이는지 — 첫 줄 앞부분, 접힌 붙여넣기 표시', () => {
+  const prompt = '작업 파일 /Users/x/tasks/sentry-24h.md 을 읽고\n그 절차대로 실행한다.'
+  assert.equal(promptVisible(['❯ 작업 파일 /Users/x/tasks/sentry-24h.md 을 읽고', '⏺ 읽는 중'], prompt), true)
+  assert.equal(promptVisible(['› 작업  파일 /Users/x/tasks/sen'], prompt), true, '공백 수가 달라도 같은 글')
+  assert.equal(promptVisible(['❯ [Pasted text #1 +12 lines]'], prompt), true)
+  assert.equal(promptVisible(['Claude Code', '❯ Try "fix lint errors"'], prompt), false)
+  assert.equal(promptVisible(['❯ 아무거나'], '   '), false, '빈 글은 보였다고 하지 않음')
 })

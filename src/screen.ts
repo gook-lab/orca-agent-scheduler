@@ -92,13 +92,25 @@ function geminiPrompt(lines: string[]): PromptState {
 const questions = ['Do you want to', 'Would you like to', 'Allow execution', 'Apply this change?']
 const yesWords = ['Yes, proceed', 'Yes, just this once', 'Yes, allow once']
 
-/** 도구 권한 창이 화면 끝에 떠 있는지 — 묻는 줄과 「예」 선택지가 함께 있어야 한다. */
+/** 권한·질문 창이 화면 끝에 떠 있는지 — 묻는 줄과 「예」 선택지가 함께 있거나, Claude Code 의 선택 창 안내
+ *  (`Enter to select · ↑/↓ to navigate`, 질문 도구 실화면 2026-11-13)가 화면 맨 끝에 보이면. */
 export function permissionPrompt(lines: string[]): boolean {
   const recent = lines.slice(-30).map((l) => l.replace(/^[ │| ]+|[ │| ]+$/g, ''))
+  if (trimmedTail(recent).slice(-2).some((l) => l.startsWith('Enter to select'))) return true
   const asks = recent.some((l) => questions.some((q) => l.includes(q)))
   const yes = recent.some((line) => {
     const l = line.replace(/^[❯›>●○ ]+/, '')
     return l.startsWith('1. Yes') || l.startsWith('1.Yes') || yesWords.some((w) => l.includes(w))
   })
   return asks && yes
+}
+
+/** 보낸 글이 화면에 보이는가 — 글이 실제로 들어갔다는 증거. 첫 줄 앞 16자로 찾고, 긴 글은 에이전트가
+ *  「[Pasted text #1 +5 lines]」처럼 접어 보이므로 그 표시도 들어간 것으로 본다. */
+export function promptVisible(lines: string[], prompt: string): boolean {
+  const squash = (s: string): string => s.replace(/\s+/g, ' ').trim()
+  const first = prompt.split('\n').map(squash).find(Boolean) ?? ''
+  if (!first) return false
+  const head = [...first].slice(0, 16).join('')
+  return lines.some((l) => squash(l).includes(head) || /\[Pasted/i.test(l))
 }

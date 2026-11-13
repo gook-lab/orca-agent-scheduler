@@ -1,14 +1,12 @@
-// 예약 패널 — 지금 보고 있는 워크스페이스의 에이전트에 예약을 건다. 실행은 worker 가 한다.
+// 예약 패널 — 워크스페이스·에이전트·시각·보낼 글을 정한다. 시각이 되면 worker 가 새 에이전트를 띄워 보낸다.
 import {
   atom,
   Badge,
   Button,
   Callout,
   Card,
-  Checkbox,
   Collapsible,
   EmptyState,
-  Field,
   host,
   IconButton,
   Input,
@@ -29,54 +27,70 @@ import {
 } from 'orca'
 import { clock, cronOf, type DayChoice, dayChoices, describe, nextRun, parseCron, parseTimes, specOf } from './cron'
 import type { Schedule } from './engine'
+import type { WorkspaceOption } from './protocol'
 import './protocol'
-import { agentKind, agentName } from './screen'
-
-type Agent = { terminalId: string; title: string; agent: string | null; state: string }
+import { agentKind, agentKinds, agentName } from './screen'
 
 /** worker 가 알려 주는 예약 목록 — 처음에 한 번 묻고, 고칠 때마다 worker 가 다시 보낸다. */
 const schedules = atom<Schedule[]>([])
-const agents = atom<Agent[]>([])
-const workspaceName = atom<string>('')
+const workspaces = atom<WorkspaceOption[]>([])
+/** 지금 보고 있는 워크스페이스 — 새 예약의 기본값. */
+const focused = atom<{ displayName: string; branch: string } | null>(null)
 
 type Draft = {
   id?: string
   name: string
-  terminalId: string
+  workspaceId: string
+  agent: string
   day: DayChoice | 'cron'
   times: string
   cron: string
   prompt: string
-  clearFirst: boolean
 }
-const emptyDraft = (): Draft => ({ name: '', terminalId: '', day: 'weekdays', times: '09:00', cron: '0 9 * * 1-5', prompt: '', clearFirst: false })
+const emptyDraft = (): Draft => ({
+  name: '',
+  workspaceId: '',
+  agent: 'claude',
+  day: 'weekdays',
+  times: '09:00',
+  cron: '0 9 * * 1-5',
+  prompt: ''
+})
 const draft = atom<Draft>(emptyDraft())
 const formOpen = atom(false)
 const formError = atom<string | null>(null)
 const saving = atom(false)
 
-async function refreshAgents(): Promise<void> {
+async function refreshWorkspaces(): Promise<void> {
   try {
-    const [{ agents: list }, context] = await Promise.all([host.call('agents.list'), host.call('workspace.readContext')])
-    set(
-      agents,
-      list
-        .filter((a) => a.terminalId && agentKind(a.agent))
-        .map((a) => ({ terminalId: a.terminalId as string, title: a.title ?? '터미널', agent: a.agent, state: a.state }))
-    )
-    set(workspaceName, context?.displayName ?? '')
+    set(workspaces, await plugin.request('workspaces.list'))
   } catch {
-    set(agents, [])
+    set(workspaces, [])
   }
+}
+
+/** 지금 보고 있는 워크스페이스의 id(이름·브랜치가 같은 것). */
+function focusedId(): string {
+  const f = read(focused)
+  if (!f) return ''
+  return read(workspaces).find((w) => w.name === f.displayName && (w.branch ?? '') === f.branch)?.id ?? ''
+}
+
+function openNew(): void {
+  set(draft, { ...emptyDraft(), workspaceId: focusedId() })
+  set(formError, null)
+  set(formOpen, true)
 }
 
 export function setup(ctx: PanelContext): void {
   ctx.subscriptions.push(plugin.on('schedules.changed', (p) => set(schedules, p.schedules)))
-  ctx.subscriptions.push(on('workspace.changed', () => void refreshAgents()))
-  ctx.subscriptions.push(on('agent.status.changed', () => void refreshAgents()))
+  ctx.subscriptions.push(on('workspace.changed', (e) => set(focused, e.context)))
+  ctx.subscriptions.push(on('workspace.created', () => void refreshWorkspaces()))
+  ctx.subscriptions.push(on('workspace.removed', () => void refreshWorkspaces()))
   // worker 를 깨우고 지금 목록을 받는다.
   void plugin.request('schedules.list').then((list) => set(schedules, list)).catch(() => undefined)
-  void refreshAgents()
+  void refreshWorkspaces()
+  void host.call('workspace.readContext').then((c) => set(focused, c)).catch(() => undefined)
 }
 
 /** 고른 요일·시각(또는 cron 직접)을 식으로. 틀리면 이유. */
@@ -95,20 +109,18 @@ async function save(): Promise<void> {
   const d = read(draft)
   const c = cronOfDraft(d)
   if ('error' in c) return set(formError, c.error)
-  const target = read(agents).find((a) => a.terminalId === d.terminalId)
+  const target = read(workspaces).find((w) => w.id === d.workspaceId)
   const old = read(schedules).find((s) => s.id === d.id)
   set(saving, true)
   try {
     await plugin.request('schedules.save', {
       ...(d.id ? { id: d.id } : {}),
       name: d.name,
-      terminalId: d.terminalId,
-      terminalTitle: target?.title ?? old?.terminalTitle ?? '',
-      agent: target?.agent ?? old?.agent ?? null,
-      workspace: target ? read(workspaceName) : (old?.workspace ?? ''),
+      workspaceId: d.workspaceId,
+      workspace: target?.name ?? old?.workspace ?? '',
+      agent: d.agent,
       cron: c.cron,
       prompt: d.prompt,
-      clearFirst: d.clearFirst,
       enabled: old?.enabled ?? true
     })
     set(draft, emptyDraft())
@@ -126,12 +138,12 @@ function edit(s: Schedule): void {
   set(draft, {
     id: s.id,
     name: s.name,
-    terminalId: s.terminalId,
+    workspaceId: s.workspaceId,
+    agent: s.agent,
     day: spec?.day ?? 'cron',
     times: spec ? spec.times.map(clock).join(', ') : '09:00',
     cron: s.cron,
-    prompt: s.prompt,
-    clearFirst: s.clearFirst
+    prompt: s.prompt
   })
   set(formError, null)
   set(formOpen, true)
@@ -142,6 +154,8 @@ const agentLabel = (agent: string | null): string => {
   return k ? agentName[k] : '에이전트'
 }
 
+const workspaceLabel = (w: WorkspaceOption): string => (w.branch && w.branch !== w.name ? `${w.name} · ${w.branch}` : w.name)
+
 const statusTone = (status: string | null): 'success' | 'danger' | 'warning' | 'neutral' =>
   status === '성공' || status?.startsWith('끝남')
     ? 'success'
@@ -151,12 +165,14 @@ const statusTone = (status: string | null): 'success' | 'danger' | 'warning' | '
         ? 'warning'
         : 'neutral'
 
+const when = (at: number): string => new Date(at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
 function ScheduleCard({ s }: { s: Schedule }) {
-  const live = read(agents).find((a) => a.terminalId === s.terminalId)
   const last = s.history[0]
-  const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null)
+  const gone = read(workspaces).length > 0 && !read(workspaces).some((w) => w.id === s.workspaceId)
+  const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null) ?? (gone ? '워크스페이스가 없어졌습니다 — 고치기에서 다시 고르세요' : null)
   return (
-    <Card title={s.name} description={`${agentLabel(s.agent)} · ${live?.title ?? s.terminalTitle}${s.workspace ? ` · ${s.workspace}` : ''}`}>
+    <Card title={s.name} description={`${agentLabel(s.agent)} · ${s.workspace}`}>
       <Stack gap="xs">
         <Text size="sm">
           {describe(s.cron)}
@@ -171,16 +187,15 @@ function ScheduleCard({ s }: { s: Schedule }) {
         </Text>
         {s.sentAt !== null ? (
           <Text size="sm" tone="accent">
-            {'보냄 · 끝나기를 기다리는 중 '}
+            {'실행 중 · '}
             <RelativeTime at={s.sentAt} />
+            {' 띄움'}
           </Text>
         ) : last ? (
           <Row gap="xs">
             <Badge tone={statusTone(last.status)}>{last.status}</Badge>
             <Text muted size="xs" truncate>
-              {[new Date(last.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }), last.summary]
-                .filter(Boolean)
-                .join(' · ')}
+              {[when(last.at), last.summary].filter(Boolean).join(' · ')}
             </Text>
           </Row>
         ) : null}
@@ -196,7 +211,12 @@ function ScheduleCard({ s }: { s: Schedule }) {
             onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })}
           />
           <Row gap="xs">
-            <IconButton icon="play" label="지금 보내기" tooltip="터미널이 비면 바로 보냅니다" onPress={() => void plugin.request('schedules.runNow', { id: s.id })} />
+            <IconButton
+              icon="play"
+              label="지금 보내기"
+              tooltip="새 에이전트를 바로 띄워 보냅니다"
+              onPress={() => void plugin.request('schedules.runNow', { id: s.id })}
+            />
             <IconButton icon="edit" label="고치기" onPress={() => edit(s)} />
             <IconButton icon="delete" label="지우기" tone="danger" onPress={() => void plugin.request('schedules.delete', { id: s.id })} />
           </Row>
@@ -208,9 +228,7 @@ function ScheduleCard({ s }: { s: Schedule }) {
                 <Row gap="xs">
                   <Badge tone={statusTone(r.status)}>{r.status}</Badge>
                   <Text muted size="xs" truncate>
-                    {[new Date(r.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }), r.summary]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    {[when(r.at), r.summary].filter(Boolean).join(' · ')}
                   </Text>
                 </Row>
               ))}
@@ -224,11 +242,11 @@ function ScheduleCard({ s }: { s: Schedule }) {
 
 function Form() {
   const d = read(draft)
-  const list = read(agents)
+  const list = read(workspaces)
   const old = read(schedules).find((s) => s.id === d.id)
-  const options = list.map((a) => ({ value: a.terminalId, label: `${agentLabel(a.agent)} · ${a.title}` }))
-  if (d.terminalId && !options.some((o) => o.value === d.terminalId)) {
-    options.unshift({ value: d.terminalId, label: `${old?.terminalTitle ?? '고른 터미널'} (이 워크스페이스에 없음)` })
+  const options = list.map((w) => ({ value: w.id, label: workspaceLabel(w) }))
+  if (d.workspaceId && !options.some((o) => o.value === d.workspaceId)) {
+    options.unshift({ value: d.workspaceId, label: `${old?.workspace ?? '고른 워크스페이스'} (지금 없음)` })
   }
   const c = cronOfDraft(d)
   const patch = (p: Partial<Draft>) => update(draft, (x) => ({ ...x, ...p }))
@@ -236,11 +254,18 @@ function Form() {
     <Stack gap="sm">
       <Input label="이름" value={d.name} placeholder="아침 리포트 정리" onChange={(name) => patch({ name })} />
       <Select
-        label="터미널"
-        value={d.terminalId}
-        placeholder={list.length === 0 ? '이 워크스페이스에 에이전트 터미널이 없습니다' : '고르세요'}
+        label="워크스페이스"
+        value={d.workspaceId}
+        placeholder={list.length === 0 ? '워크스페이스 목록을 읽지 못했습니다' : '고르세요'}
         options={options}
-        onChange={(terminalId) => patch({ terminalId })}
+        onChange={(workspaceId) => patch({ workspaceId })}
+      />
+      <RadioGroup
+        label="에이전트"
+        orientation="horizontal"
+        value={d.agent}
+        options={agentKinds.map((k) => ({ value: k, label: agentName[k] }))}
+        onChange={(agent) => patch({ agent })}
       />
       <RadioGroup
         label="요일"
@@ -257,13 +282,7 @@ function Form() {
       <Text muted size="xs">
         {'error' in c ? c.error : describe(c.cron)}
       </Text>
-      <Textarea label="보낼 글" rows={4} value={d.prompt} placeholder="받는 에이전트가 그대로 읽고 실행합니다" onChange={(prompt) => patch({ prompt })} />
-      <Checkbox
-        label="보내기 전에 대화 비우기(/clear)"
-        description="켜면 보낼 때마다 그 터미널의 대화를 지웁니다. 꺼 두면 쓰던 터미널에 걸어도 화면이 조용해질 때까지 기다렸다 보냅니다."
-        checked={d.clearFirst}
-        onChange={(clearFirst) => patch({ clearFirst })}
-      />
+      <Textarea label="보낼 글" rows={4} value={d.prompt} placeholder="새로 띄운 에이전트가 그대로 읽고 실행합니다" onChange={(prompt) => patch({ prompt })} />
       {read(formError) ? <Callout tone="danger">{read(formError)}</Callout> : null}
       <Row gap="xs">
         <Button tone="accent" variant="solid" disabled={read(saving) || 'error' in c} onPress={() => void save()}>
@@ -289,20 +308,24 @@ export default function Panel() {
   const open = read(formOpen)
   return (
     <Stack gap="md">
-      <Collapsible title={read(draft).id ? '예약 고치기' : '새 예약'} open={open} onChange={(o) => set(formOpen, o)}>
+      <Collapsible
+        title={read(draft).id ? '예약 고치기' : '새 예약'}
+        open={open}
+        onChange={(o) => (o && !read(draft).id && !read(draft).workspaceId ? openNew() : set(formOpen, o))}
+      >
         <Form />
       </Collapsible>
       {list.length === 0 ? (
         <EmptyState
           icon="calendar"
           title="예약이 없습니다"
-          description="「새 예약」에서 이 워크스페이스의 Claude Code·Codex·Gemini 터미널을 골라 정해진 시각에 글을 보냅니다."
+          description="「새 예약」에서 워크스페이스와 에이전트(Claude Code·Codex·Gemini CLI)를 고르면, 정해진 시각마다 새 에이전트를 띄워 글을 보냅니다."
         />
       ) : (
         list.map((s) => <ScheduleCard s={s} />)
       )}
       <Text muted size="xs">
-        Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널이 일하는 중이거나 입력 칸에 글이 있으면 빌 때까지 기다리고, 60분이 지나면 그 회차는 건너뜁니다.
+        Orca 가 켜져 있는 동안 30초마다 확인합니다. 회차마다 새 터미널 탭이 생기니 다 본 탭은 닫아 주세요. 지난 회차가 아직 돌고 있으면 끝날 때까지(최대 60분) 기다렸다 띄웁니다.
       </Text>
     </Stack>
   )

@@ -1,24 +1,23 @@
 // 예약 실행기 worker. 상태 막대 항목이 있어 플러그인이 켜져 있는 동안 계속 돈다(30초마다 확인).
-// 예약은 storage 의 'schedules' 한 곳에 두고, 패널은 같은 키를 읽는다. 고치는 일은 모두 여기서 한다.
+// 예약은 storage 의 'schedules' 한 곳에 두고, 고치는 일은 모두 여기서 한다. 패널은 요청으로 묻고 알림으로 받는다.
+// 에이전트 띄우기와 살아 있는 터미널 목록은 Orca CLI 로 한다(이유는 src/cli.ts).
 import type { OrcaWorkerApi } from 'orca/worker'
+import { aliveFrom, type CliRunner, cliRunner, findCli, launchArgs, launchedFrom } from './cli'
 import { clock } from './cron'
-import {
-  blankSchedule,
-  type Io,
-  newMemory,
-  nextAfter,
-  onAgentStatus,
-  type Schedule,
-  type StatusEvent,
-  tick
-} from './engine'
-import type { RunnerStatus, ScheduleDraft } from './protocol'
+import { blankSchedule, inspectOnEvent, type Io, newMemory, nextAfter, onAgentStatus, type Schedule, type StatusEvent, tick } from './engine'
+import type { RunnerStatus, ScheduleDraft, WorkspaceOption } from './protocol'
 import './protocol'
+import { agentKind } from './screen'
 
 export const KEY = 'schedules'
 export const TICK_MS = 30_000
+/** 멈춤 알림 뒤 화면이 그려지기를 기다리는 시간 — 질문 창은 첫 알림보다 조금 늦게 그려진다. */
+export const SETTLE_MS = 1500
 
 type HostError = Error & { code?: string }
+
+/** 화면 읽기에서 다음 확인 때 다시 볼 오류 — 바쁨·시간 초과, 플러그인을 다시 읽는 동안의 권한 확인. */
+const transientRead = new Set(['rate_limited', 'unavailable', 'timeout', 'consent_required'])
 
 function invalid(message: string): HostError {
   const e: HostError = new Error(message)
@@ -36,11 +35,17 @@ function normalize(value: unknown): Schedule[] {
 
 let timer: ReturnType<typeof setInterval> | undefined
 
+/** CLI 실행기 — 비어 있으면 실행 중인 Orca 앱의 CLI 를 찾아 쓴다. 시험에서 가짜로 바꿔 끼운다. */
+export const cli: { run: CliRunner | null } = { run: null }
+
 export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   let list = normalize(await orca.storage.get(KEY))
   let saved = JSON.stringify(list)
   const memory = newMemory()
   const status: RunnerStatus = { lastTickAt: null, log: [] }
+  const bin = cli.run ? null : findCli(process.execPath)
+  const run: CliRunner | null = cli.run ?? (bin ? cliRunner(bin) : null)
+  orca.log(run ? `Orca CLI: ${bin ?? '시험용'}` : `Orca CLI 를 찾지 못함(worker: ${process.execPath})`)
 
   // 한 번에 하나씩 — 확인(tick)과 패널의 고치기가 서로 덮어쓰지 않게.
   let chain: Promise<unknown> = Promise.resolve()
@@ -53,24 +58,23 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   const io: Io = {
     async read(terminalId) {
       try {
-        const r = await orca.host.call('terminal.read', { terminalId, maxLines: 60 })
+        const r = await orca.host.call('terminal.read', { terminalId, maxLines: 200 })
         return r.lines
       } catch (error) {
         const code = (error as HostError).code
-        // 바쁘거나 시간이 걸린 것은 다음에 다시 — 그 밖의 실패는 터미널이 없는 것으로 본다.
-        if (code === 'rate_limited' || code === 'unavailable' || code === 'timeout') throw error
-        orca.log(`terminal.read ${terminalId}: ${code ?? String(error)}`)
+        if (code && transientRead.has(code)) throw error
+        orca.log(`terminal.read ${terminalId}: ${code ?? ''} ${(error as Error).message}`)
         return null
       }
     },
-    async send(terminalId, text) {
-      try {
-        const r = await orca.host.call('terminal.sendText', { terminalId, text, enter: true })
-        return r.accepted
-      } catch (error) {
-        orca.log(`terminal.sendText ${terminalId}: ${(error as HostError).code ?? String(error)}`)
-        return false
-      }
+    async launch(workspaceId, agent, prompt) {
+      if (!run) return { error: 'Orca CLI 를 찾지 못함' }
+      const r = launchedFrom(await run(launchArgs(workspaceId, agent, prompt)))
+      if ('error' in r) orca.log(`agent launch ${workspaceId} ${agent}: ${r.error}`)
+      return r
+    },
+    async alive() {
+      return run ? aliveFrom(await run(['terminal', 'list'])) : null
     }
   }
 
@@ -95,7 +99,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       .filter((s) => s.enabled && s.nextRunAt !== null)
       .sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
     const at = next?.nextRunAt ? new Date(next.nextRunAt) : null
-    const text = stuck.length > 0 ? `예약 ${stuck.length}개 대기` : at ? `${clock(at.getHours() * 60 + at.getMinutes())} ${next.name}` : '예약 없음'
+    const text = stuck.length > 0 ? `예약 ${stuck.length}개 확인 필요` : at ? `${clock(at.getHours() * 60 + at.getMinutes())} ${next.name}` : '예약 없음'
     const tooltip = [
       at ? `다음: ${at.toLocaleString('ko-KR')} · ${next.name}` : '켜진 예약 없음',
       ...stuck.map((s) => `${s.name}: ${s.blocked ?? s.waitNote}`)
@@ -105,25 +109,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       .catch(() => undefined)
   }
 
-  /** 지금 보고 있는 워크스페이스의 에이전트 상태·제목을 받아 둔다(다른 워크스페이스는 알림으로 쌓인다). */
-  const refreshAgents = async (): Promise<void> => {
-    try {
-      const { agents } = await orca.host.call('agents.list')
-      for (const a of agents) {
-        if (!a.terminalId) continue
-        const known = memory.agents.get(a.terminalId)
-        if (!known || known.since <= a.stateStartedAt) {
-          memory.agents.set(a.terminalId, { state: a.state, since: a.stateStartedAt })
-        }
-      }
-    } catch {
-      // 상태 목록이 없어도 화면으로 판정한다.
-    }
-  }
-
   const runTick = (): Promise<void> =>
     serial(async () => {
-      await refreshAgents()
       const now = Date.now()
       const r = await tick(list, io, memory, now)
       status.lastTickAt = now
@@ -135,24 +122,32 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   orca.events.on('agent.status.changed', (e) =>
     serial(async () => {
-      const r = onAgentStatus(list, memory, e as StatusEvent)
-      notify(r.notices)
-      if (r.changed) await persist()
+      const seen = await inspectOnEvent(list, e as StatusEvent, io, SETTLE_MS)
+      const r = seen.hold ? { changed: false, notices: [] } : onAgentStatus(list, e as StatusEvent)
+      notify([...seen.notices, ...r.notices])
+      if (seen.changed || r.changed) await persist()
     })
   )
 
   orca.panels.handle('schedules.list', () => list)
 
+  orca.panels.handle('workspaces.list', async (): Promise<WorkspaceOption[]> => {
+    const { workspaces } = await orca.host.call('workspace.list')
+    return workspaces.map(({ id, name, branch, path, kind }) => ({ id, name, branch, path, kind }))
+  })
+
   orca.panels.handle('schedules.save', (draft: ScheduleDraft) =>
     serial(async () => {
       const name = draft.name.trim()
       if (!name) throw invalid('이름을 적어 주세요')
-      if (!draft.terminalId) throw invalid('터미널을 골라 주세요')
+      if (!draft.workspaceId) throw invalid('워크스페이스를 골라 주세요')
+      if (!agentKind(draft.agent)) throw invalid('에이전트를 골라 주세요(Claude Code·Codex·Gemini CLI)')
       if (!draft.prompt.trim()) throw invalid('보낼 글을 적어 주세요')
       const nextRunAt = nextAfter(draft.cron, Date.now())
       if (nextRunAt === null) throw invalid('이 시각으로는 앞으로 돌지 않습니다 — 시각을 확인해 주세요')
       const old = draft.id ? list.find((s) => s.id === draft.id) : undefined
-      const s: Schedule = { ...(old ?? blankSchedule(draft.id ?? newId())), ...draft, name, id: old?.id ?? draft.id ?? newId() }
+      const id = old?.id ?? draft.id ?? newId()
+      const s: Schedule = { ...(old ?? blankSchedule(id)), ...draft, name, id }
       s.nextRunAt = s.enabled ? nextRunAt : null
       list = old ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]
       await persist()
@@ -186,7 +181,6 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     const s = await serial(async () => {
       const s = find(list, id)
       if (s.pendingSince === null) s.pendingSince = Date.now()
-      s.waitNote = '지금 보내기 — 터미널이 비면 보냄'
       await persist()
       return s
     })

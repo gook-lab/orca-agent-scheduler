@@ -2,8 +2,8 @@
   "manifestVersion": 2,
   "id": "agent-cron",
   "name": "OrcaCron 예약",
-  "version": "0.1.0",
-  "description": "열어 둔 Claude Code·Codex·Gemini 터미널에 정해진 시각마다 글을 보냅니다. 터미널이 일하는 중이면 빌 때까지 기다립니다.",
+  "version": "0.2.0",
+  "description": "정해진 시각마다 고른 워크스페이스에 Claude Code·Codex·Gemini CLI 를 새로 띄워 글을 보내고, 끝났는지 지켜봅니다. 띄우기는 Orca CLI 로 합니다.",
   "author": {
     "name": "gook-lab",
     "url": "https://github.com/gook-lab"
@@ -41,9 +41,6 @@
     ]
   },
   "capabilities": [
-    {
-      "kind": "terminal:send"
-    },
     {
       "kind": "terminal:read"
     },

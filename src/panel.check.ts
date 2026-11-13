@@ -3,31 +3,30 @@ import { defineCheck } from 'orca/testing'
 
 const now = Date.now()
 const base = {
-  terminalTitle: '리포트 정리',
-  agent: 'claude',
+  workspaceId: 'w1',
   workspace: 'sonix_docs',
+  agent: 'claude',
   prompt: '오늘 할 일 정리',
-  clearFirst: false,
   enabled: true,
   pendingSince: null,
   waitNote: null,
-  clearedFor: null,
+  terminalId: null,
   sentAt: null,
   sawWorking: false,
   blocked: null,
   lastStatus: null,
   history: []
 }
-const agents = {
-  agents: [
-    { terminalId: 't1', title: '리포트 정리', agent: 'claude', state: 'done', stateStartedAt: 0 },
-    { terminalId: 't2', title: '교차 검토', agent: 'codex', state: 'working', stateStartedAt: 0 }
-  ]
-}
 const results = {
-  'agents.list': agents,
   'workspace.readContext': { branch: 'main', displayName: 'sonix_docs', terminals: [] },
-  'terminal.read': { lines: ['──────────────────────────────', '❯ ', '──────────────────────────────'], truncated: false },
+  'workspace.list': {
+    workspaces: [
+      { id: 'w1', kind: 'worktree', name: 'sonix_docs', path: '/repo/docs', branch: 'main', hostId: null },
+      { id: 'w2', kind: 'folder', name: 'notes', path: '/notes', branch: null, hostId: null }
+    ],
+    truncated: false
+  },
+  'terminal.read': { lines: ['──────────────────────────────', '❯ 작업 중', '──────────────────────────────'], truncated: false },
   'statusBar.update': { ok: true }
 }
 
@@ -41,7 +40,6 @@ export default defineCheck({
           ...base,
           id: 's1',
           name: '아침 리포트 정리',
-          terminalId: 't1',
           cron: '0 9 * * 1-5',
           nextRunAt: now + 3 * 3600_000,
           lastStatus: '성공',
@@ -51,24 +49,23 @@ export default defineCheck({
           ...base,
           id: 's2',
           name: 'PR 교차 검토',
-          terminalId: 't2',
-          terminalTitle: '교차 검토',
           agent: 'codex',
           cron: '30 14 * * 1-5',
           nextRunAt: now + 5 * 3600_000,
-          pendingSince: now - 120_000,
-          waitNote: '에이전트가 작업 중'
+          terminalId: 'term_a',
+          sentAt: now - 20 * 60_000,
+          blocked: '입력 칸이 보이지 않은 채 멈춤(시작 화면·선택 창) — 그 터미널을 확인해 주세요'
         },
         {
           ...base,
           id: 's3',
           name: '회의록 요약',
-          terminalId: 't9',
-          terminalTitle: '문서 요약',
-          agent: 'gemini',
+          workspaceId: 'w2',
           workspace: 'notes',
+          agent: 'gemini',
           cron: '0 18 * * *',
           nextRunAt: now + 8 * 3600_000,
+          terminalId: 'term_b',
           sentAt: now - 300_000,
           lastStatus: '보냄'
         }

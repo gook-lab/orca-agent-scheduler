@@ -329,7 +329,7 @@ const ko: Words = {
     copyOf: (name) => `${name} 사본`,
     deleted: (name) => `「${name}」 지움`,
     undo: '되돌리기',
-    waitingToSend: '보낼 차례를 기다림',
+    waitingToSend: '보내기 대기',
     stats: {
       schedules: (n) => `예약 ${n}`,
       on: (n) => `켜짐 ${n}`,

@@ -442,18 +442,24 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
   const nextText = s.enabled ? (s.nextRunAt !== null ? `${u.next} ${whenText(l, s.nextRunAt)}` : u.never) : u.off
   return (
     <Box border radius="md" padding="sm" gap="xs">
+      {/* The name gets the whole width — next to the buttons a long name broke a word per line. */}
+      <Switch label={s.name} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
       <Box direction="row" align="center" gap="xs">
         <Box grow shrink minWidth={0}>
-          <Switch label={s.name} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
+          <Text size="xs" muted>
+            {[nextText, describe(s.cron, l), s.clearFirst ? '/clear' : ''].filter(Boolean).join(' · ')}
+          </Text>
         </Box>
-        <IconButton icon="play" size="sm" variant="ghost" label={u.sendNow} tooltip={u.sendNowTip} onPress={() => void plugin.request('schedules.runNow', { id: s.id })} />
-        <IconButton icon="edit" size="sm" variant="ghost" label={u.edit} onPress={() => edit(s)} />
-        <IconButton icon="copy" size="sm" variant="ghost" label={u.duplicate} onPress={() => duplicate(s)} />
-        <IconButton icon="delete" size="sm" variant="ghost" label={u.remove} onPress={() => remove(s)} />
+        {/* Keeps its width — squeezed, the toolbar wraps its last button onto a second line. */}
+        <Box shrink={false}>
+          <Toolbar label={s.name} gap="none">
+            <IconButton icon="play" size="xs" variant="ghost" label={u.sendNow} tooltip={u.sendNowTip} onPress={() => void plugin.request('schedules.runNow', { id: s.id })} />
+            <IconButton icon="edit" size="xs" variant="ghost" label={u.edit} onPress={() => edit(s)} />
+            <IconButton icon="copy" size="xs" variant="ghost" label={u.duplicate} onPress={() => duplicate(s)} />
+            <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => remove(s)} />
+          </Toolbar>
+        </Box>
       </Box>
-      <Text size="xs" muted>
-        {[nextText, describe(s.cron, l), s.clearFirst ? '/clear' : ''].filter(Boolean).join(' · ')}
-      </Text>
       {s.sentAt !== null ? (
         <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
       ) : last ? (
@@ -509,11 +515,12 @@ function SentList({ list }: { list: Schedule[] }) {
                     {s.name}
                   </Text>
                 </Box>
-                <Text size="xs" muted>
-                  {whenText(l, at(s))}
-                </Text>
                 <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => remove(s)} />
               </Box>
+              {/* Its own line — beside the name it was squeezed into a column and broke mid-time. */}
+              <Text size="xs" muted>
+                {whenText(l, at(s))}
+              </Text>
               {note ? (
                 <Text size="xs" tone="warning">
                   {noteText(l, note)}

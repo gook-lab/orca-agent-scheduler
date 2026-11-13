@@ -1,0 +1,63 @@
+{
+  "manifestVersion": 2,
+  "id": "agent-cron",
+  "name": "OrcaCron 예약",
+  "version": "0.1.0",
+  "description": "열어 둔 Claude Code·Codex·Gemini 터미널에 정해진 시각마다 글을 보냅니다. 터미널이 일하는 중이면 빌 때까지 기다립니다.",
+  "author": {
+    "name": "gook-lab",
+    "url": "https://github.com/gook-lab"
+  },
+  "repository": "https://github.com/gook-lab/orca-cron",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "agent-cron",
+        "title": "OrcaCron 예약",
+        "icon": "calendar",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "next",
+        "text": "예약",
+        "icon": "calendar",
+        "tooltip": "OrcaCron 예약"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "terminal:send"
+    },
+    {
+      "kind": "terminal:read"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "notifications:show"
+    }
+  ]
+}

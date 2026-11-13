@@ -2,13 +2,13 @@
 
 Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times. It waits until that terminal is idle, sends through the Orca CLI, and records when the agent finishes. The plugin grew out of the menubar app [OrcaCron](https://github.com/gook-lab/orca-cron) and keeps its own schedules; the two do not share data.
 
-The panel is in English by default. Switch to Korean with the language menu at its top right; the status bar and notifications follow.
+The panel follows Orca's language: Korean when Orca is in Korean, English otherwise. Settings (the gear at the top) can fix it to English or Korean; the status bar and notifications follow.
 
 ## Target — a terminal you pick
 
-A schedule belongs to one terminal you already have open, in any workspace. The terminal menu lists only terminals where Orca sees an agent running, labelled `agent · terminal title · workspace`. A plain shell is never offered and never sent to.
+A schedule belongs to one terminal you already have open, in any workspace. The terminal list in the form shows only terminals where Orca sees an agent running: the terminal title, then the workspace and the agent. A plain shell is never offered and never sent to.
 
-- Orca restarts give terminals new handles. The schedule finds its terminal again by its pane. A terminal that was closed shows as `(not open)`; the run waits, and you pick another terminal by editing the schedule.
+- Orca restarts give terminals new handles. The schedule finds its terminal again by its pane. A terminal that was closed shows as `not open`; the run waits, and you pick another terminal by editing the schedule.
 - **Start a new conversation** sends `/clear` first, then the prompt once the screen settles. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
 
 ## Sending — idle check, then the Orca CLI
@@ -48,18 +48,20 @@ Sending uses `orca terminal send --terminal <handle> --text <prompt> --enter --w
 
 The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`) and keeps Create disabled while a field is wrong. A schedule saved as cron that the form can express reopens in the form.
 
-## Screens — side panel laid out like the menubar app
+## Screens — side panel laid out like Orca's own sidebars
 
-The calendar icon in the right sidebar opens the **Agent Scheduler** panel, laid out like the OrcaCron menubar app.
+The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It is laid out like Orca's file explorer: a title row with icon buttons, tabs, a search box, then the list.
 
 | Part | What it shows and does |
 |---|---|
-| Top | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. The language menu sits on the right |
-| One block per terminal | Agent icon (Claude Code ★, Codex `>_`, Gemini CLI ⚡), a green dot while the terminal is open, workspace and title. Pressing the workspace or the icon brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal**. A block folds to one line: `2 schedules · next tomorrow 09:00` |
+| Title row | **Agent Scheduler**, then New schedule (+), Send once (›), Reload terminals and Settings |
+| Tabs and search | **Schedules N** and **Terminals N**. The search box under them filters both, by terminal title, workspace, agent or schedule name |
+| Schedules | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal |
+| Terminal line | Agent icon (Claude Code ★, Codex `>_`, Gemini CLI ⚡), a green dot while the terminal is open, workspace and title. Pressing the workspace or the icon brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal**. A block folds to one line: `2 schedules · next tomorrow 09:00` |
 | Schedule in a block | Switch with the name; send now, edit, duplicate, delete (Undo for 8 seconds); next run and the rule; last result, a warning when it waits on a person, and the history |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; the newest 20 finished ones are kept |
-| Terminals without schedules | Open agent terminals with no schedule, the first four, then `N more` |
-| Bottom | New schedule, Send, reload terminals |
+| Terminals | Every open agent terminal, each on the same line as above |
+| Settings | Language (same as Orca, English or Korean) and how sending works |
 
 A closed terminal keeps its block, greyed out, with its last known agent; its schedules wait until it is open again or you pick another terminal in Edit.
 
@@ -67,7 +69,7 @@ The status bar shows the next run, and turns orange with a count when a schedule
 
 ## Send once — one prompt now
 
-**Send** (or the arrow on a terminal line) opens the same form without days or times. The prompt goes out under the same idle check as a schedule, the name may stay empty (the first line of the prompt is used), and the result stays as a sent record under the terminal.
+**Send once** (› in the title row, or on a terminal line) opens the same form without days or times. The prompt goes out under the same idle check as a schedule, the name may stay empty (the first line of the prompt is used), and the result stays as a sent record under the terminal.
 
 ## Permissions — screen, status, CLI
 
@@ -76,7 +78,7 @@ The status bar shows the next run, and turns orange with a count when a schedule
 | `terminal:read` | Reading the chosen terminal's screen for the idle check, dialogs and the end |
 | `agent:read` | Agent status events for the end |
 | `workspace:read` | Workspace names in the terminal menu |
-| `storage:own` | Schedules and the language |
+| `storage:own` | Schedules and the language setting |
 | `notifications:show` | Answers needed, failures |
 
 Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI.

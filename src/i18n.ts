@@ -5,10 +5,11 @@ export type Lang = 'en' | 'ko'
 
 export const langOf = (value: unknown): Lang => (value === 'ko' ? 'ko' : 'en')
 
-export const langOptions: { value: Lang; label: string }[] = [
-  { value: 'en', label: 'English' },
-  { value: 'ko', label: '한국어' }
-]
+/** Each language in its own words — the same in every language. */
+export const langNames: Record<Lang, string> = { en: 'English', ko: '한국어' }
+
+/** Orca's UI language (BCP-47, `env.locale`) as a panel language: Korean for `ko…`, else English. */
+export const langOfLocale = (locale: string): Lang => (/^ko\b/i.test(locale) ? 'ko' : 'en')
 
 export const statuses = ['sent', 'success', 'done', 'doneWaiting', 'failed', 'aborted', 'noResult', 'skipped'] as const
 export type Status = (typeof statuses)[number]
@@ -83,14 +84,13 @@ const en = {
     editSchedule: 'Edit schedule',
     emptyTitle: 'No schedules yet',
     emptyDescription:
-      'Press + on an agent terminal (Claude Code, Codex, Gemini CLI) below, or New schedule, and pick a time. At that time, once the terminal is idle, the prompt is sent to it.',
+      'Press + at the top, or + on an agent terminal (Claude Code, Codex, Gemini CLI) in Terminals, and pick a time. At that time, once the terminal is idle, the prompt is sent to it.',
     footer:
       'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped.',
     language: 'Language',
     name: 'Name',
     namePlaceholder: 'Morning report',
     terminal: 'Terminal',
-    terminalPlaceholder: 'Pick an agent terminal',
     noTerminals: 'No agent terminals are open in Orca',
     notOpen: 'not open',
     terminalGone: 'This terminal is not open — pick it again in Edit',
@@ -149,9 +149,16 @@ const en = {
     expand: 'Expand',
     groupSummary: (n: number, next: string | null) => `${n === 1 ? '1 schedule' : `${n} schedules`}${next ? ` · next ${next}` : ''}`,
     sentGroup: (n: number, last: string | null) => `Sent ${n}${last ? ` · last ${last}` : ''}`,
-    idleTerminals: (n: number) => `Terminals without schedules ${n}`,
-    more: (n: number) => `${n} more`,
-    less: 'Show less',
+    view: 'View',
+    tabSchedules: (n: number) => `Schedules ${n}`,
+    tabTerminals: (n: number) => `Terminals ${n}`,
+    find: 'Find',
+    findPlaceholder: 'Find schedules or terminals',
+    noMatch: (q: string) => `Nothing matches “${q}”`,
+    actions: 'Actions',
+    settings: 'Settings',
+    langAuto: (name: string) => `Same as Orca (${name})`,
+    howItWorks: 'How it works',
     duplicate: 'Duplicate',
     copyOf: (name: string) => `${name} copy`,
     deleted: (name: string) => `Deleted “${name}”`,
@@ -243,14 +250,13 @@ const ko: Words = {
     editSchedule: '예약 고치기',
     emptyTitle: '예약이 없습니다',
     emptyDescription:
-      '아래 에이전트 터미널(Claude Code·Codex·Gemini CLI)의 + 나 「새 예약」에서 시각을 고르면, 그 시각에 터미널이 비어 있을 때 글을 보냅니다.',
+      '위의 + 나 「터미널」 탭에서 에이전트 터미널(Claude Code·Codex·Gemini CLI) 줄의 + 를 눌러 시각을 고르면, 그 시각에 터미널이 비어 있을 때 글을 보냅니다.',
     footer:
       'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다.',
     language: '언어',
     name: '이름',
     namePlaceholder: '아침 리포트 정리',
     terminal: '터미널',
-    terminalPlaceholder: '에이전트 터미널을 고르세요',
     noTerminals: 'Orca 에 열린 에이전트 터미널이 없습니다',
     notOpen: '지금 없음',
     terminalGone: '이 터미널이 열려 있지 않습니다 — 고치기에서 다시 고르세요',
@@ -309,9 +315,16 @@ const ko: Words = {
     expand: '펼치기',
     groupSummary: (n, next) => `예약 ${n}${next ? ` · 다음 ${next}` : ''}`,
     sentGroup: (n, last) => `보낸 기록 ${n}${last ? ` · 마지막 ${last}` : ''}`,
-    idleTerminals: (n) => `예약 없는 터미널 ${n}`,
-    more: (n) => `${n}개 더 보기`,
-    less: '접기',
+    view: '보기',
+    tabSchedules: (n) => `예약 ${n}`,
+    tabTerminals: (n) => `터미널 ${n}`,
+    find: '찾기',
+    findPlaceholder: '예약·터미널 찾기',
+    noMatch: (q) => `「${q}」와 맞는 항목이 없습니다`,
+    actions: '동작',
+    settings: '설정',
+    langAuto: (name) => `Orca 와 같게(${name})`,
+    howItWorks: '동작 방식',
     duplicate: '복제',
     copyOf: (name) => `${name} 사본`,
     deleted: (name) => `「${name}」 지움`,

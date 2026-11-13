@@ -1,6 +1,7 @@
-// Schedules panel — laid out like the OrcaCron menubar app: what runs next and counts on top, then one
-// block per agent terminal with its schedules, then the terminals without schedules. Pressing a
-// terminal's name brings Orca to it. The form (new · edit · send once) replaces the list while open.
+// Schedules panel — laid out like Orca's own sidebars: a title with icon buttons, tabs, a search box,
+// then the list. Schedules shows what runs next, counts and one block per agent terminal; Terminals
+// lists every open agent terminal. Pressing a terminal's name brings Orca to it. The form (new · edit ·
+// send once) and Settings replace the list while open.
 import {
   atom,
   Badge,
@@ -10,8 +11,11 @@ import {
   Checkbox,
   Collapsible,
   EmptyState,
+  env,
   IconButton,
   Input,
+  List,
+  ListItem,
   plugin,
   RadioGroup,
   read,
@@ -20,15 +24,18 @@ import {
   set,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   Text,
   Textarea,
+  Toolbar,
   update,
   type IconName,
   type PanelContext
 } from 'orca'
 import { nextRun, parseCron } from './cron'
 import type { Schedule, TerminalRef } from './engine'
-import { attentionCodes, type Lang, langOptions, noteText, recordText, statusText, whenText, words } from './i18n'
+import { attentionCodes, type Lang, langNames, langOfLocale, noteText, recordText, statusText, whenText, words } from './i18n'
 import { LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import {
@@ -49,16 +56,24 @@ import {
 const schedules = atom<Schedule[]>([])
 /** Agent terminals open in Orca; null until the first answer. Pushed by the worker when it changes. */
 const terminals = atom<TerminalOption[] | null>(null)
-/** English by default; stored in plugin storage so the worker words notifications the same way. */
+type LangPref = 'auto' | Lang
+/** Orca's language unless one is picked in Settings. */
+const langPref = atom<LangPref>('langPref', 'auto', { persist: 'storage' })
+/** The language in use, stored for the worker (it cannot read Orca's language) so notifications match. */
 const lang = atom<Lang>(LANG_KEY, 'en', { persist: 'storage' })
+const langFor = (pref: LangPref): Lang => (pref === 'auto' ? langOfLocale(env.locale) : pref)
 /** Terminal blocks folded shut, by pane id. */
 const collapsed = atom<string[]>([])
-/** Terminals without schedules beyond the first IDLE_PREVIEW are shown. */
-const showAllIdle = atom(false)
 /** The schedule just deleted, while Undo is offered. */
 const undone = atom<Schedule | null>(null)
+type View = 'schedules' | 'terminals'
+const tab = atom<View>('schedules')
+/** The search box — filters both tabs. */
+const query = atom('')
+const settingsOpen = atom(false)
 
-const IDLE_PREVIEW = 4
+/** The plugin's name — the same in every language. */
+const TITLE = 'Agent Scheduler'
 const UNDO_MS = 8000
 
 type DayMode = 'everyDay' | 'weekdays' | 'weekends' | 'pick' | 'dates' | 'cron'
@@ -146,6 +161,7 @@ function closeForm(): void {
 }
 
 export function setup(ctx: PanelContext): void {
+  set(lang, langFor(read(langPref)))
   ctx.subscriptions.push(plugin.on('schedules.changed', (p) => set(schedules, p.schedules)))
   ctx.subscriptions.push(plugin.on('terminals.changed', (p) => set(terminals, p.terminals)))
   // Wakes the worker and gets the current list.
@@ -259,11 +275,6 @@ async function focusTerminal(handle: string): Promise<void> {
 const sameTerminal = (a: Pick<TerminalRef, 'handle' | 'leafId'>, b: Pick<TerminalRef, 'handle' | 'leafId'>): boolean =>
   a.handle === b.handle || (!!a.leafId && a.leafId === b.leafId)
 
-const terminalLabel = (t: TerminalRef): string => {
-  const k = agentKind(t.agent)
-  return [k ? agentName[k] : t.agent, t.title, t.workspace].filter(Boolean).join(' · ')
-}
-
 async function save(): Promise<void> {
   const l = read(lang)
   const d = read(draft)
@@ -307,16 +318,51 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
 const needsAttention = (s: Schedule): boolean =>
   s.blocked !== null || (s.pendingSince !== null && s.waitNote !== null && attentionCodes.includes(s.waitNote.code))
 
-// ───────────────────────── Top — next run and counts ─────────────────────────
+// ───────────────────────── Top — title and actions, tabs, search ─────────────────────────
 
-function Summary() {
-  const l = read(lang)
-  const u = words(l).ui
+/** The schedule that runs next, if any. */
+const nextOf = (list: Schedule[]): Schedule | undefined =>
+  list.filter((s) => !s.once && s.enabled && s.nextRunAt !== null).sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
+
+/** Title on the left, icon buttons on the right — the title row of Orca's own sidebars. */
+function Header() {
+  const u = words(read(lang)).ui
+  return (
+    <Box direction="row" align="center" gap="xs">
+      <Box grow shrink minWidth={0}>
+        <Text size="sm" weight="semibold" truncate>
+          {TITLE}
+        </Text>
+      </Box>
+      <Toolbar label={u.actions} gap="none">
+        <IconButton icon="add" size="sm" variant="ghost" label={u.newSchedule} onPress={() => openNew()} />
+        <IconButton icon="next" size="sm" variant="ghost" label={u.sendOnce} onPress={() => openSend()} />
+        <IconButton icon="refresh" size="sm" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+        <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={() => set(settingsOpen, true)} />
+      </Toolbar>
+    </Box>
+  )
+}
+
+/** Tabs with their counts, the search box under them. */
+function Nav() {
+  const u = words(read(lang)).ui
+  return (
+    <Stack gap="xs">
+      <Tabs label={u.view} value={read(tab)} onChange={(v) => set(tab, v === 'terminals' ? 'terminals' : 'schedules')}>
+        <Tab value="schedules" label={u.tabSchedules(read(schedules).filter((s) => !s.once).length)} />
+        <Tab value="terminals" label={u.tabTerminals(read(terminals)?.length ?? 0)} />
+      </Tabs>
+      <Input type="search" label={u.find} labelHidden value={read(query)} placeholder={u.findPlaceholder} onChange={(v) => set(query, v)} />
+    </Stack>
+  )
+}
+
+/** Counts — schedules, on, waiting, running, need attention, runs today. */
+function Stats() {
+  const u = words(read(lang)).ui
   const list = read(schedules)
   const recurring = list.filter((s) => !s.once)
-  const next = recurring
-    .filter((s) => s.enabled && s.nextRunAt !== null)
-    .sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
   const midnight = new Date()
   midnight.setHours(0, 0, 0, 0)
   const today = list.reduce((n, s) => n + s.history.filter((r) => r.at >= midnight.getTime()).length, 0)
@@ -324,26 +370,14 @@ function Summary() {
   const running = list.filter((s) => s.sentAt !== null).length
   const attention = list.filter(needsAttention).length
   return (
-    <Stack gap="xs">
-      <Box direction="row" justify="between" align="center" gap="sm">
-        <Box grow shrink minWidth={0}>
-          <Text size="sm" weight="semibold" truncate>
-            {next?.nextRunAt ? u.nextUp(whenText(l, next.nextRunAt), next.name) : u.noneUp}
-          </Text>
-        </Box>
-        <Box width={110} shrink={false}>
-          <Select label={u.language} labelHidden value={l} options={langOptions} onChange={(v) => set(lang, v === 'ko' ? 'ko' : 'en')} />
-        </Box>
-      </Box>
-      <Row gap="xs" wrap>
-        <Badge>{u.stats.schedules(recurring.length)}</Badge>
-        <Badge tone="success">{u.stats.on(recurring.filter((s) => s.enabled).length)}</Badge>
-        {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
-        {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
-        {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
-        <Badge>{u.stats.today(today)}</Badge>
-      </Row>
-    </Stack>
+    <Row gap="xs" wrap>
+      <Badge>{u.stats.schedules(recurring.length)}</Badge>
+      <Badge tone="success">{u.stats.on(recurring.filter((s) => s.enabled).length)}</Badge>
+      {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
+      {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
+      {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
+      <Badge>{u.stats.today(today)}</Badge>
+    </Row>
   )
 }
 
@@ -497,8 +531,8 @@ function SentList({ list }: { list: Schedule[] }) {
 
 type Group = { key: string; ref: TerminalRef; live: TerminalOption | null; recurring: Schedule[]; once: Schedule[] }
 
-/** Schedules by terminal (a closed one keeps its block), and the open terminals with none. */
-function groupsOf(list: Schedule[], open: TerminalOption[] | null): { groups: Group[]; idle: TerminalOption[] } {
+/** Schedules by terminal — a closed terminal keeps its block. */
+function groupsOf(list: Schedule[], open: TerminalOption[] | null): Group[] {
   const groups = new Map<string, Group>()
   for (const s of list) {
     const live = open?.find((t) => sameTerminal(t, s.terminal)) ?? null
@@ -507,10 +541,23 @@ function groupsOf(list: Schedule[], open: TerminalOption[] | null): { groups: Gr
     ;(s.once ? g.once : g.recurring).push(s)
     groups.set(key, g)
   }
-  const used = [...groups.values()].map((g) => g.live?.handle)
-  const idle = (open ?? []).filter((t) => !used.includes(t.handle))
-  const sorted = [...groups.values()].sort((a, b) => a.ref.workspace.localeCompare(b.ref.workspace) || a.ref.title.localeCompare(b.ref.title))
-  return { groups: sorted, idle }
+  return [...groups.values()].sort((a, b) => a.ref.workspace.localeCompare(b.ref.workspace) || a.ref.title.localeCompare(b.ref.title))
+}
+
+/** True when the search is empty or one of the texts contains it (`q` lower-cased). */
+const matches = (q: string, texts: string[]): boolean => !q || texts.some((t) => t.toLowerCase().includes(q))
+
+const terminalTexts = (t: TerminalRef): string[] => {
+  const kind = agentKind(t.agent)
+  return [t.title, t.workspace, kind ? agentName[kind] : t.agent]
+}
+
+/** A block whose terminal matches stays whole; otherwise it keeps only the schedules whose name matches. */
+function filterGroup(g: Group, q: string): Group | null {
+  if (matches(q, terminalTexts(g.ref))) return g
+  const recurring = g.recurring.filter((s) => matches(q, [s.name]))
+  const once = g.once.filter((s) => matches(q, [s.name]))
+  return recurring.length + once.length > 0 ? { ...g, recurring, once } : null
 }
 
 function TerminalBlock({ g }: { g: Group }) {
@@ -521,7 +568,9 @@ function TerminalBlock({ g }: { g: Group }) {
   const next = g.recurring.filter((s) => s.enabled && s.nextRunAt !== null).sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
   return (
     <Stack gap="xs">
-      <TerminalLine term={g.ref} live={g.live} fold={{ open, toggle }} />
+      <Box background="muted" radius="md" paddingX="xs">
+        <TerminalLine term={g.ref} live={g.live} fold={{ open, toggle }} />
+      </Box>
       {open ? (
         <Stack gap="xs">
           {g.recurring.map((s) => (
@@ -538,25 +587,54 @@ function TerminalBlock({ g }: { g: Group }) {
   )
 }
 
-function IdleTerminals({ idle }: { idle: TerminalOption[] }) {
+/** What runs next and the counts, then one block per terminal. */
+function SchedulesView() {
+  const l = read(lang)
+  const u = words(l).ui
+  const list = read(schedules)
+  if (list.length === 0) return <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription} />
+  const q = read(query).trim().toLowerCase()
+  const groups = groupsOf(list, read(terminals)).flatMap((g) => filterGroup(g, q) ?? [])
+  const next = nextOf(list)
+  return (
+    <Stack gap="md">
+      <Stack gap="xs">
+        <Text size="xs" muted truncate>
+          {next?.nextRunAt ? u.nextUp(whenText(l, next.nextRunAt), next.name) : u.noneUp}
+        </Text>
+        <Stats />
+      </Stack>
+      {groups.length === 0 ? (
+        <Text size="xs" muted>
+          {u.noMatch(read(query).trim())}
+        </Text>
+      ) : null}
+      {groups.map((g) => (
+        <TerminalBlock g={g} />
+      ))}
+    </Stack>
+  )
+}
+
+/** Every open agent terminal — press one to bring Orca to it, send to it once or schedule on it. */
+function TerminalsView() {
   const u = words(read(lang)).ui
-  const all = read(showAllIdle)
-  const shown = all ? idle : idle.slice(0, IDLE_PREVIEW)
+  const open = read(terminals)
+  if (open === null) return null
+  if (open.length === 0) return <EmptyState icon="terminal" title={u.noTerminals} />
+  const q = read(query).trim().toLowerCase()
+  const shown = open.filter((t) => matches(q, terminalTexts(t)))
+  if (shown.length === 0)
+    return (
+      <Text size="xs" muted>
+        {u.noMatch(read(query).trim())}
+      </Text>
+    )
   return (
     <Stack gap="xs">
-      <Text size="xs" muted weight="semibold">
-        {u.idleTerminals(idle.length)}
-      </Text>
       {shown.map((t) => (
         <TerminalLine term={t} live={t} />
       ))}
-      {idle.length > IDLE_PREVIEW ? (
-        <Row>
-          <Button size="xs" variant="ghost" icon={all ? 'collapse' : 'expand'} onPress={() => set(showAllIdle, !all)}>
-            {all ? u.less : u.more(idle.length - IDLE_PREVIEW)}
-          </Button>
-        </Row>
-      ) : null}
     </Stack>
   )
 }
@@ -730,16 +808,57 @@ function TimeFields() {
 
 // ───────────────────────── Form — new · edit · send once ─────────────────────────
 
+/** Terminals as a list inside the panel — a Select's popup grows to its longest label and spills past
+ *  the panel. Scrolls after a few rows. */
+function TerminalPicker({ selected, missing, onPick }: { selected: string; missing: TerminalRef | null; onPick: (handle: string) => void }) {
+  const u = words(read(lang)).ui
+  const open = read(terminals)
+  const item = (t: TerminalRef, live: boolean) => {
+    const kind = agentKind(t.agent)
+    return (
+      <ListItem
+        key={`terminal-${t.handle}`}
+        icon={kind ? agentIcon[kind] : 'agent'}
+        title={t.title || t.workspace}
+        description={[t.workspace, kind ? agentName[kind] : t.agent, live ? '' : u.notOpen].filter(Boolean).join(' · ')}
+        current={t.handle === selected}
+        disabled={!live}
+        onPress={() => onPick(t.handle)}
+      />
+    )
+  }
+  return (
+    <Stack gap="xs">
+      <Box direction="row" align="center" justify="between">
+        <Text size="sm" weight="medium">
+          {u.terminal}
+        </Text>
+        <IconButton icon="refresh" size="xs" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+      </Box>
+      {open !== null && open.length === 0 && !missing ? (
+        <Text size="xs" muted>
+          {u.noTerminals}
+        </Text>
+      ) : (
+        <Box border radius="md" maxHeight={240} scroll="y">
+          <List label={u.terminal}>
+            {missing ? item(missing, false) : null}
+            {(open ?? []).map((t) => item(t, true))}
+          </List>
+        </Box>
+      )}
+    </Stack>
+  )
+}
+
 function Form() {
   const l = read(lang)
   const u = words(l).ui
   const d = read(draft)
   const open = read(terminals)
   const old = read(schedules).find((s) => s.id === d.id)
-  const options = (open ?? []).map((t) => ({ value: t.handle, label: terminalLabel(t) }))
-  if (old && d.handle && !options.some((o) => o.value === d.handle)) {
-    options.unshift({ value: d.handle, label: `${terminalLabel(old.terminal)} (${u.notOpen})` })
-  }
+  // The saved terminal stays first while it is closed, so editing does not silently move the schedule.
+  const missing = old && d.handle && !(open ?? []).some((t) => t.handle === d.handle) ? old.terminal : null
   const c = d.once ? null : cronOfDraft(d, l)
   const patch = (p: Partial<Draft>) => update(draft, (x) => ({ ...x, ...p }))
   const changeDay = (v: string) => {
@@ -766,18 +885,7 @@ function Form() {
         placeholder={d.once ? u.namePlaceholderOnce : u.namePlaceholder}
         onChange={(name) => patch({ name })}
       />
-      <Box direction="row" gap="xs" align="end">
-        <Box grow>
-          <Select
-            label={u.terminal}
-            value={d.handle}
-            placeholder={open !== null && open.length === 0 ? u.noTerminals : u.terminalPlaceholder}
-            options={options}
-            onChange={(handle) => patch({ handle })}
-          />
-        </Box>
-        <IconButton icon="refresh" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
-      </Box>
+      <TerminalPicker selected={d.handle} missing={missing} onPick={(handle) => patch({ handle })} />
       <Checkbox label={u.clearFirst} description={u.clearFirstHint} checked={d.clearFirst} onChange={(clearFirst) => patch({ clearFirst })} />
       {c === null ? null : (
         <Stack gap="sm">
@@ -817,17 +925,56 @@ function Form() {
   )
 }
 
+// ───────────────────────── Settings ─────────────────────────
+
+function Settings() {
+  const u = words(read(lang)).ui
+  const pick = (v: string) => {
+    const pref: LangPref = v === 'en' || v === 'ko' ? v : 'auto'
+    set(langPref, pref)
+    set(lang, langFor(pref))
+  }
+  return (
+    <Stack gap="md">
+      <Box direction="row" align="center" gap="xs">
+        <Button size="sm" variant="ghost" onPress={() => set(settingsOpen, false)}>
+          {`‹ ${u.back}`}
+        </Button>
+        <Text weight="semibold">{u.settings}</Text>
+      </Box>
+      <RadioGroup
+        label={u.language}
+        value={read(langPref)}
+        options={[
+          { value: 'auto', label: u.langAuto(langNames[langOfLocale(env.locale)]) },
+          { value: 'en', label: langNames.en },
+          { value: 'ko', label: langNames.ko }
+        ]}
+        onChange={pick}
+      />
+      <Stack gap="xs">
+        <Text size="sm" weight="medium">
+          {u.howItWorks}
+        </Text>
+        <Text size="xs" muted>
+          {u.footer}
+        </Text>
+      </Stack>
+    </Stack>
+  )
+}
+
 // ───────────────────────── Panel ─────────────────────────
 
 export default function Panel() {
-  const l = read(lang)
-  const u = words(l).ui
   if (read(formOpen)) return <Form />
-  const { groups, idle } = groupsOf(read(schedules), read(terminals))
+  if (read(settingsOpen)) return <Settings />
+  const u = words(read(lang)).ui
   const gone = read(undone)
   return (
-    <Stack gap="md">
-      <Summary />
+    <Stack gap="sm">
+      <Header />
+      <Nav />
       {gone ? (
         <Callout tone="neutral" icon="info" title={u.deleted(gone.name)}>
           <Row>
@@ -837,25 +984,7 @@ export default function Panel() {
           </Row>
         </Callout>
       ) : null}
-      {groups.length === 0 ? <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription} /> : null}
-      {groups.map((g) => (
-        <TerminalBlock g={g} />
-      ))}
-      {idle.length > 0 ? <IdleTerminals idle={idle} /> : null}
-      <Box direction="row" align="center" justify="between">
-        <Row gap="xs">
-          <Button size="sm" variant="ghost" icon="add" onPress={() => openNew()}>
-            {u.newSchedule}
-          </Button>
-          <Button size="sm" variant="ghost" icon="next" onPress={() => openSend()}>
-            {u.send}
-          </Button>
-        </Row>
-        <IconButton icon="refresh" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
-      </Box>
-      <Text muted size="xs">
-        {u.footer}
-      </Text>
+      {read(tab) === 'terminals' ? <TerminalsView /> : <SchedulesView />}
     </Stack>
   )
 }

@@ -38,9 +38,9 @@ function host(calls: Partial<Calls> = {}, opts: { terminals?: TerminalOption[]; 
 }
 
 async function fillBasics(view: Awaited<ReturnType<typeof mount>>) {
-  await view.press({ type: 'Button', text: 'New schedule' })
+  await view.press({ type: 'IconButton', label: 'New schedule' })
   await view.type({ label: 'Name' }, 'Code review')
-  await view.select({ label: 'Terminal' }, 'h2')
+  await view.press({ type: 'ListItem', label: 'Review' })
   await view.type({ label: 'Prompt' }, 'Review open PRs')
 }
 
@@ -60,11 +60,15 @@ test('English by default — empty state, then a schedule on a picked terminal',
   const view = await mount(panel, { host: host({ saved }) })
   assert.ok(view.find({ label: 'No schedules yet' }))
   await fillBasics(view)
-  const select = view.find({ label: 'Terminal' })
   assert.deepEqual(
-    (select?.props.options as { label: string }[]).map((o) => o.label),
-    ['Claude Code · Morning · sonix_docs', 'Codex · Review · toy']
+    view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.description, e.props.icon, e.props.current]),
+    [
+      ['Morning', 'sonix_docs · Claude Code', 'star', false],
+      ['Review', 'toy · Codex', 'terminal', true]
+    ],
+    'terminals listed in the panel, the picked one marked'
   )
+  assert.equal(view.find({ type: 'Select', label: 'Terminal' }), null, 'no popup to spill past the panel')
   await view.type({ label: 'Time 1' }, '9:30', { replace: true })
   await view.press({ text: 'Add time' })
   await view.type({ label: 'Time 2' }, '1800', { replace: true })
@@ -131,9 +135,9 @@ test('repeat — every N minutes all day or between two times', async () => {
 
 test('a bad time or no terminal keeps Create disabled', async () => {
   const view = await mount(panel, { host: host() })
-  await view.press({ type: 'Button', text: 'New schedule' })
+  await view.press({ type: 'IconButton', label: 'New schedule' })
   assert.equal(view.find({ text: 'Create schedule' })?.props.disabled, true, 'no terminal yet')
-  await view.select({ label: 'Terminal' }, 'h1')
+  await view.press({ type: 'ListItem', label: 'Morning' })
   await view.type({ label: 'Time 1' }, '25:00', { replace: true })
   assert.ok(view.find({ text: /Check the time fields/ }))
   assert.equal(view.find({ text: 'Create schedule' })?.props.disabled, true)
@@ -142,15 +146,26 @@ test('a bad time or no terminal keeps Create disabled', async () => {
   await view.unmount()
 })
 
-test('Korean on switch, and on reopen from storage', async () => {
+test("language — Orca's by default, or the one picked in Settings; stored for the worker", async () => {
+  const ko = await mount(panel, { host: host(), locale: 'ko-KR' })
+  assert.ok(ko.find({ label: '예약이 없습니다' }), 'Orca in Korean, so the panel too')
+  assert.equal(ko.host.data().storage.lang, 'ko', 'stored for the worker')
+  await ko.unmount()
   const view = await mount(panel, { host: host() })
+  assert.ok(view.find({ label: 'No schedules yet' }))
+  await view.press({ label: 'Settings' })
+  const picker = view.find({ type: 'RadioGroup', label: 'Language' })
+  assert.equal(picker?.props.value, 'auto')
+  assert.equal((picker?.props.options as { label: string }[])[0].label, 'Same as Orca (English)')
   await view.select({ label: 'Language' }, 'ko')
+  assert.equal(view.host.data().storage.lang, 'ko')
+  assert.equal(view.host.data().storage.langPref, 'ko')
+  await view.press({ text: '‹ 뒤로' })
   assert.ok(view.find({ label: '예약이 없습니다' }))
-  assert.equal(view.host.data().storage.lang, 'ko', 'stored for the worker')
   await view.unmount()
-  const again = await mount(panel, { host: host({}, { storage: { lang: 'ko' } }) })
-  assert.ok(again.find({ text: '예약 없는 터미널 2' }))
-  await again.press({ type: 'Button', text: '새 예약' })
+  const again = await mount(panel, { host: host({}, { storage: { langPref: 'ko' } }) })
+  assert.ok(again.find({ type: 'Tab', label: '터미널 2' }), 'the pick holds while Orca is in English')
+  await again.press({ type: 'IconButton', label: '새 예약' })
   assert.ok(again.find({ text: '평일 09:00' }))
   await again.unmount()
 })
@@ -182,7 +197,7 @@ test('counts on top — schedules, on, waiting, attention, runs today — and wh
   await view.unmount()
 })
 
-test('one block per terminal — closed terminals keep theirs, open ones without schedules below', async () => {
+test('Schedules has one block per terminal — closed ones keep theirs; Terminals lists every open one', async () => {
   const many = [...open, ...[3, 4, 5, 6].map((n) => ({ ...open[0], handle: `h${n}`, leafId: `l${n}`, title: `Spare ${n}` }))]
   const view = await mount(panel, { host: host({}, { terminals: many }) })
   const running: Schedule = {
@@ -203,12 +218,37 @@ test('one block per terminal — closed terminals keep theirs, open ones without
   assert.ok(view.find({ text: 'Done' }))
   assert.ok(view.find({ text: /took 3 min/ }))
   assert.equal(view.find({ type: 'Button', text: 'toy' })?.props.disabled, true, 'a closed terminal cannot be shown')
-  assert.ok(view.find({ text: 'Terminals without schedules 5' }), 'h2 is open without schedules, plus four spares')
-  assert.ok(view.find({ text: '1 more' }))
-  assert.equal(view.find({ text: 'Spare 6' }), null, 'only the first four')
-  await view.press({ text: '1 more' })
+  assert.equal(view.find({ text: 'Spare 6' }), null, 'terminals without schedules are on the other tab')
+  assert.ok(view.find({ type: 'Tab', label: 'Schedules 2' }))
+  await view.select({ type: 'Tabs' }, 'terminals')
+  assert.equal(view.findAll({ type: 'Button', text: 'sonix_docs' }).length, 5, 'h1 and the four spares')
+  assert.equal(view.find({ type: 'Button', text: 'toy' })?.props.disabled, false, 'h2 is open')
   assert.ok(view.find({ text: 'Spare 6' }))
+  assert.equal(view.find({ label: 'Morning report' }), null, 'no schedules on this tab')
   assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('search filters both tabs — by terminal, workspace, agent or schedule name', async () => {
+  const view = await mount(panel, { host: host() })
+  const named = (id: string, name: string, t: TerminalOption): Schedule => ({ ...blankSchedule(id), name, terminal: { ...t } })
+  await view.post('schedules.changed', {
+    schedules: [named('s1', 'Morning report', open[0]), named('s2', 'Release notes', open[0]), named('s3', 'PR review', open[1])]
+  })
+  await view.type({ label: 'Find' }, 'RELEASE')
+  assert.ok(view.find({ label: 'Release notes' }))
+  assert.equal(view.find({ label: 'Morning report' }), null, 'same terminal, name does not match')
+  assert.equal(view.find({ label: 'PR review' }), null)
+  await view.type({ label: 'Find' }, 'codex', { replace: true })
+  assert.ok(view.find({ label: 'PR review' }), 'the agent matches, so its whole block stays')
+  assert.equal(view.find({ label: 'Release notes' }), null)
+  await view.type({ label: 'Find' }, 'nothing here', { replace: true })
+  assert.ok(view.find({ text: 'Nothing matches “nothing here”' }))
+  await view.select({ type: 'Tabs' }, 'terminals')
+  assert.ok(view.find({ text: 'Nothing matches “nothing here”' }), 'the same search on Terminals')
+  await view.type({ label: 'Find' }, 'toy', { replace: true })
+  assert.ok(view.find({ type: 'Button', text: 'toy' }))
+  assert.equal(view.find({ type: 'Button', text: 'sonix_docs' }), null)
   await view.unmount()
 })
 
@@ -228,6 +268,7 @@ test('folding a block leaves a one-line summary', async () => {
 test('pressing a terminal shows it in Orca', async () => {
   const focused: string[] = []
   const view = await mount(panel, { host: host({ focused }) })
+  await view.select({ type: 'Tabs' }, 'terminals')
   await view.press({ type: 'Button', text: 'toy' })
   await view.press({ label: 'Claude Code — Show this terminal in Orca' })
   assert.deepEqual(focused, ['h2', 'h1'])
@@ -237,9 +278,12 @@ test('pressing a terminal shows it in Orca', async () => {
 test('send once from a terminal line — no days or times, the name may stay empty', async () => {
   const saved: ScheduleDraft[] = []
   const view = await mount(panel, { host: host({ saved }) })
+  await view.select({ type: 'Tabs' }, 'terminals')
+  // The title row's, then one per terminal — the last is Review's.
   const sendButtons = view.findAll({ label: 'Send once' })
-  await view.press(sendButtons[1])
-  assert.equal(view.find({ label: 'Terminal' })?.props.value, 'h2', 'that terminal picked')
+  assert.equal(sendButtons.length, 3)
+  await view.press(sendButtons[2])
+  assert.equal(view.find({ type: 'ListItem', label: 'Review' })?.props.current, true, 'that terminal picked')
   assert.equal(view.find({ label: 'Days' }), null)
   assert.equal(view.find({ text: 'Send' })?.props.disabled, true, 'no prompt yet')
   await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
@@ -297,6 +341,23 @@ test('the worker pushes the terminal list — a closed terminal turns its block 
   await view.post('terminals.changed', { terminals: [open[1]] })
   assert.equal(view.find({ type: 'Button', text: 'sonix_docs' })?.props.disabled, true)
   assert.ok(view.find({ text: /This terminal is not open/ }))
+  await view.unmount()
+})
+
+test('editing a schedule on a closed terminal keeps that terminal first, marked not open', async () => {
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ saved }) })
+  const gone = { ...open[0], handle: 'h-gone', leafId: 'l-gone', title: 'Old docs' }
+  const s: Schedule = { ...blankSchedule('s1'), name: 'Release', terminal: gone, prompt: 'Ship it' }
+  await view.post('schedules.changed', { schedules: [s] })
+  await view.press({ label: 'Edit' })
+  const first = view.findAll({ type: 'ListItem' })[0]
+  assert.equal(first.label, 'Old docs')
+  assert.equal(first.props.current, true)
+  assert.equal(first.disabled, true)
+  assert.match(String(first.props.description), /not open/)
+  await view.press({ text: 'Save' })
+  assert.deepEqual(saved[0].terminal, gone, 'saving without picking keeps the old terminal')
   await view.unmount()
 })
 

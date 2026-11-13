@@ -191,6 +191,25 @@ function ReloadButton() {
   )
 }
 
+/** No agent terminal to pick — the Terminals tab and the form's picker say the same: how to get one,
+ *  and a reload for once it is running. */
+function NoAgentTerminals() {
+  const u = words(read(lang)).ui
+  return (
+    <EmptyState icon="terminal" title={u.noTerminals} description={u.noTerminalsHint}>
+      <Row>
+        {read(refreshing) ? (
+          <Spinner label={u.loading} />
+        ) : (
+          <Button size="sm" variant="outline" icon="refresh" onPress={() => void refreshTerminals()}>
+            {u.refreshTerminals}
+          </Button>
+        )}
+      </Row>
+    </EmptyState>
+  )
+}
+
 function openForm(d: Draft): void {
   set(draft, d)
   const first = d.dates[0]
@@ -668,8 +687,14 @@ function SentList({ list }: { list: Schedule[] }) {
   const at = (s: Schedule) => s.sentAt ?? s.pendingSince ?? s.history[0]?.at ?? 0
   const sorted = [...list].sort((a, b) => at(b) - at(a))
   const busy = sorted.some((s) => s.pendingSince !== null || s.sentAt !== null)
+  // Open is read only when drawn first, so a new send keyed by the newest record draws it afresh — open
+  // while it waits or runs. It stays as it is when that send ends; a fold by hand holds until the next one.
   return (
-    <Collapsible title={u.sentGroup(sorted.length, sorted[0] ? whenText(l, at(sorted[0])) : null)} defaultOpen={busy}>
+    <Collapsible
+      key={`sent-${sorted[0]?.id ?? ''}`}
+      title={u.sentGroup(sorted.length, sorted[0] ? whenText(l, at(sorted[0])) : null)}
+      defaultOpen={busy}
+    >
       <Stack gap="xs">
         {sorted.map((s) => {
           const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null)
@@ -847,7 +872,7 @@ function TerminalsView() {
   const u = words(read(lang)).ui
   const open = read(terminals)
   if (open === null) return <Skeleton shape="text" lines={3} label={u.loading} />
-  if (open.length === 0) return <EmptyState icon="terminal" title={u.noTerminals} />
+  if (open.length === 0) return <NoAgentTerminals />
   const q = read(query).trim().toLowerCase()
   const favs = read(favorites)
   const rank = (t: TerminalOption) => (favs.includes(paneOf(t)) ? 0 : 1)
@@ -1082,9 +1107,7 @@ function TerminalPicker({ selected, missing, onPick }: { selected: string; missi
           <List label={u.terminal}>{item(chosen, !missing, false)}</List>
         </Box>
       ) : open !== null && open.length === 0 && !missing ? (
-        <Text size="xs" muted>
-          {u.noTerminals}
-        </Text>
+        <NoAgentTerminals />
       ) : (
         <Box border radius="md" maxHeight={240} scroll="y">
           <List label={u.terminal}>

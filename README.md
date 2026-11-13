@@ -61,8 +61,8 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; quiet for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |
 | Schedule in a block | Switch with the name; next run and the rule (a spinner while a run is being sent), then send now, edit, duplicate, delete (Undo for 8 seconds, in the deleted schedule's place); last result and the history. A run waiting its turn shows why in grey; an orange warning appears only when a person must act (the same ones counted on top and in the status bar) |
-| Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; the newest 20 finished ones are kept |
-| Terminals | Every open agent terminal, each on the same line as above. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
+| Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; a new send opens the group and it stays open when that send ends. The newest 20 finished ones are kept |
+| Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
 | Favorites | Favorite terminals go first on both tabs; kept across Orca restarts by pane |
 | Settings | Language (same as Orca, English or Korean) and Show the introduction again |
 

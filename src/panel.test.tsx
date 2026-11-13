@@ -662,3 +662,47 @@ test('a run being sent spins; before the first answer both tabs show a placehold
   assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }))
   await early.unmount()
 })
+
+test('a new send opens its terminal’s sent group, which stays open when it ends; folded by hand it holds until the next', async () => {
+  const view = await mount(panel, { host: host() })
+  const ended = (id: string, name: string, ago: number): Schedule => ({
+    ...blankSchedule(id),
+    once: true,
+    name,
+    terminal: { ...open[0] },
+    lastStatus: 'done',
+    history: [{ at: Date.now() - ago, status: 'done' } as never]
+  })
+  await view.post('schedules.changed', { schedules: [ended('o1', 'old one', 60_000)] })
+  assert.equal(view.find({ text: 'old one' }), null, 'nothing going on — folded')
+  const fresh: Schedule = { ...blankSchedule('o2'), once: true, name: 'new one', terminal: { ...open[0] }, pendingSince: Date.now() }
+  await view.post('schedules.changed', { schedules: [ended('o1', 'old one', 60_000), fresh] })
+  assert.ok(view.find({ text: 'new one' }), 'the send just made is in sight')
+  await view.post('schedules.changed', { schedules: [ended('o1', 'old one', 60_000), { ...fresh, pendingSince: null, lastStatus: 'done', history: [{ at: Date.now(), status: 'done' } as never] }] })
+  assert.ok(view.find({ text: 'new one' }), 'it ended — still open to read the result')
+  await view.toggle(view.findAll({ type: 'Collapsible' }).find((e) => String(e.props.title).startsWith('Sent 2'))!)
+  assert.equal(view.find({ text: 'new one' }), null)
+  await view.post('schedules.changed', { schedules: [ended('o1', 'old one', 60_000), { ...fresh, pendingSince: null, lastStatus: 'done', history: [{ at: Date.now(), status: 'done' } as never] }] })
+  assert.equal(view.find({ text: 'new one' }), null, 'folded by hand, it stays folded')
+  await view.unmount()
+})
+
+test('no agent terminal — the Terminals tab and the form say how to get one, with a reload', async () => {
+  let reads = 0
+  const view = await mount(panel, {
+    host: mockHost({
+      storage: { onboarded: true } as never,
+      requests: { 'schedules.list': () => [], 'terminals.list': () => (reads++ === 0 ? [] : open) }
+    })
+  })
+  await view.select({ type: 'Tabs' }, 'terminals')
+  const empty = view.find({ label: 'No agent terminals are open in Orca' })
+  assert.equal(empty?.props.description, 'Run claude, codex or gemini in an Orca terminal and it shows up here.')
+  await view.press({ type: 'Button', text: 'Reload terminals' })
+  assert.equal(reads, 2, 'read again')
+  assert.ok(view.find({ label: 'Claude Code — Show this terminal in Orca' }), 'and the one just started shows up')
+  reads = 0 // the form reads the list again — empty this time
+  await view.press({ type: 'IconButton', label: 'New schedule' })
+  assert.ok(view.find({ label: 'No agent terminals are open in Orca' }), 'the picker says the same')
+  await view.unmount()
+})

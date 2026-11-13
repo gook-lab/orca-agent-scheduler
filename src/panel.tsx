@@ -1147,8 +1147,9 @@ function Form() {
       </Row>
     </Callout>
   )
-  // Send once is about the prompt: terminal, prompt, Send. The name (first line if empty) and /clear
-  // wait under More options. A schedule keeps name, terminal, /clear, then when.
+  // Send once is about the prompt: terminal, prompt, Send; the name (first line if empty) waits under
+  // More options. It has no /clear — a one-off usually carries on the conversation in that terminal.
+  // A schedule keeps name, terminal, /clear, then when.
   return (
     <Stack gap="sm">
       <SubHeader title={d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule} onClose={() => leaveForm('top')} />
@@ -1185,11 +1186,8 @@ function Form() {
         </Text>
       ) : null}
       {d.once ? (
-        <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim() || d.clearFirst}>
-          <Stack gap="sm">
-            {nameField}
-            {clearField}
-          </Stack>
+        <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim()}>
+          {nameField}
         </Collapsible>
       ) : null}
       {reason ? (

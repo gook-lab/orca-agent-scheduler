@@ -9,7 +9,7 @@ The panel follows Orca's language: Korean when Orca is in Korean, English otherw
 A schedule belongs to one terminal you already have open, in any workspace. The terminal list in the form shows only terminals where Orca sees an agent running: the terminal title, then the workspace and the agent. A plain shell is never offered and never sent to. Opened from a terminal line, Edit or Duplicate, the form shows that terminal on one line with **Change**; the list opens only when you press it, and folds again once you pick.
 
 - Orca restarts give terminals new handles. The schedule finds its terminal again by its pane. A terminal that was closed shows as `not open`; the run waits, and you pick another terminal by editing the schedule.
-- **Start a new conversation** sends `/clear` first, then the prompt once the screen settles. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
+- **Start a new conversation** (schedules only) sends `/clear` first, then the prompt once the screen settles, so each run starts fresh instead of piling onto the last one. Claude Code, Codex and Gemini CLI all read `/clear` as a new conversation. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
 
 ## Sending — idle check, then the Orca CLI
 
@@ -74,7 +74,7 @@ The status bar shows the next run, and turns orange with a count when a schedule
 
 ## Send once — one prompt now
 
-**Send once** (› in the title row, or on a terminal line) opens a short form: terminal, prompt, Send; the name and /clear sit under More options. The prompt goes out under the same idle check as a schedule, the name may stay empty (the first line of the prompt is used), and the result stays as a sent record under the terminal.
+**Send once** (› in the title row, or on a terminal line) opens a short form: terminal, prompt, Send; the name sits under More options. There is no /clear here — a one-off usually carries on the conversation already in that terminal. The prompt goes out under the same idle check as a schedule, the name may stay empty (the first line of the prompt is used), and the result stays as a sent record under the terminal.
 
 ## Permissions — screen, status, CLI
 

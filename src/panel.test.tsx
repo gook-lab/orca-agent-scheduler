@@ -485,7 +485,7 @@ test('a one-off waiting its turn is grey; one stuck on a closed terminal is oran
   await view.unmount()
 })
 
-test('send once — terminal, prompt, Send; the name and /clear wait under More options', async () => {
+test('send once — terminal, prompt, Send; the name waits under More options; no /clear', async () => {
   const saved: ScheduleDraft[] = []
   const view = await mount(panel, { host: host({ saved }) })
   await view.press({ type: 'IconButton', label: 'Send once' })
@@ -494,6 +494,9 @@ test('send once — terminal, prompt, Send; the name and /clear wait under More 
   const more = titled(view, 'Collapsible', 'More options')
   assert.ok(more)
   assert.equal(more?.props.defaultOpen, false)
+  await view.toggle(more!)
+  assert.ok(view.find({ label: 'Name' }))
+  assert.equal(view.find({ label: 'Start a new conversation (send /clear first)' }), null, 'it would erase the conversation it carries on')
   await view.press({ type: 'ListItem', label: 'Review' })
   await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
   await view.press({ text: 'Send' })

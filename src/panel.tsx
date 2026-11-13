@@ -22,6 +22,8 @@ import {
   Row,
   Select,
   set,
+  Progress,
+  Skeleton,
   Spinner,
   Stack,
   storage,
@@ -56,6 +58,10 @@ import {
 
 /** The worker's schedules — asked once, then pushed on every change. */
 const schedules = atom<Schedule[]>([])
+/** The worker answered once; until then the list shows a placeholder, not "No schedules yet". */
+const schedulesLoaded = atom(false)
+/** The clock for "in 12m 08s", moved every second while the panel is in view. */
+const now = atom(Date.now())
 /** Agent terminals open in Orca; null until the first answer. Pushed by the worker when it changes. */
 const terminals = atom<TerminalOption[] | null>(null)
 type LangPref = 'auto' | Lang
@@ -216,17 +222,32 @@ function leaveForm(where: 'top' | 'bottom'): void {
   else set(confirmLeave, where)
 }
 
-export function setup(ctx: PanelContext): void {
+export function setup(ctx: PanelContext): () => void {
   set(lang, langFor(read(langPref)))
-  ctx.subscriptions.push(plugin.on('schedules.changed', (p) => set(schedules, p.schedules)))
+  ctx.subscriptions.push(
+    plugin.on('schedules.changed', (p) => {
+      set(schedules, p.schedules)
+      set(schedulesLoaded, true)
+    })
+  )
   ctx.subscriptions.push(plugin.on('terminals.changed', (p) => set(terminals, p.terminals)))
   void storage
     .get(FAVORITES_KEY)
     .then((v) => (Array.isArray(v) ? set(favorites, v.filter((k): k is string => typeof k === 'string')) : undefined))
     .catch(() => undefined)
   // Wakes the worker and gets the current list.
-  void plugin.request('schedules.list').then((list) => set(schedules, list)).catch(() => undefined)
+  void plugin
+    .request('schedules.list')
+    .then((list) => set(schedules, list))
+    .catch(() => undefined)
+    .finally(() => set(schedulesLoaded, true))
   void refreshTerminals()
+  const tick = setInterval(() => {
+    if (read(ctx.visible)) set(now, Date.now())
+  }, 1000)
+  // Node (`orca plugin test`) would otherwise wait for the timer before exiting.
+  ;(tick as { unref?: () => void }).unref?.()
+  return () => clearInterval(tick)
 }
 
 const weekdaysOf: Record<'everyDay' | 'weekdays' | 'weekends', number[]> = {
@@ -416,6 +437,24 @@ function Header() {
   )
 }
 
+/** A screen over the list — Settings, the form: its title where Agent Scheduler sits and × where the
+ *  icons sit, so the title row stays put when the screen changes. Orca has no back-arrow icon. */
+function SubHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  const u = words(read(lang)).ui
+  return (
+    <Box direction="row" align="center" gap="xs">
+      <Box grow shrink minWidth={0}>
+        <Text size="sm" weight="semibold" truncate>
+          {title}
+        </Text>
+      </Box>
+      <Toolbar label={title} gap="none">
+        <IconButton icon="close" size="sm" variant="ghost" label={u.close} onPress={onClose} />
+      </Toolbar>
+    </Box>
+  )
+}
+
 /** Tabs with their counts, the search box under them. */
 function Nav() {
   const u = words(read(lang)).ui
@@ -583,7 +622,10 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
         </Box>
       </Box>
       {s.sentAt !== null ? (
-        <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
+        <Row gap="xs">
+          <Spinner label={u.running} labelHidden />
+          <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
+        </Row>
       ) : last ? (
         <Row gap="xs">
           <Badge tone={statusTone(last.status)}>{statusText(l, last.status)}</Badge>
@@ -746,6 +788,7 @@ function SchedulesView() {
   const u = words(l).ui
   const list = read(schedules)
   const gone = read(undone)
+  if (!read(schedulesLoaded)) return <Skeleton shape="text" lines={3} label={u.loading} />
   if (list.length === 0 && !gone)
     return (
       <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription}>
@@ -771,9 +814,20 @@ function SchedulesView() {
   return (
     <Stack gap="md">
       <Stack gap="xs">
-        <Text size="xs" muted truncate>
-          {next?.nextRunAt ? u.nextUp(whenText(l, next.nextRunAt), next.name) : u.noneUp}
-        </Text>
+        <Box direction="row" align="center" gap="xs">
+          <Box grow shrink minWidth={0}>
+            <Text size="xs" muted truncate>
+              {next?.nextRunAt ? u.nextUp(whenText(l, next.nextRunAt), next.name) : u.noneUp}
+            </Text>
+          </Box>
+          {next?.nextRunAt ? (
+            <Box shrink={false}>
+              <Text size="xs" tone="accent">
+                {u.until(next.nextRunAt - read(now))}
+              </Text>
+            </Box>
+          ) : null}
+        </Box>
         <Stats />
       </Stack>
       {groups.length === 0 ? (
@@ -792,7 +846,7 @@ function SchedulesView() {
 function TerminalsView() {
   const u = words(read(lang)).ui
   const open = read(terminals)
-  if (open === null) return null
+  if (open === null) return <Skeleton shape="text" lines={3} label={u.loading} />
   if (open.length === 0) return <EmptyState icon="terminal" title={u.noTerminals} />
   const q = read(query).trim().toLowerCase()
   const favs = read(favorites)
@@ -1097,12 +1151,7 @@ function Form() {
   // wait under More options. A schedule keeps name, terminal, /clear, then when.
   return (
     <Stack gap="sm">
-      <Box direction="row" align="center" gap="xs">
-        <Button size="sm" variant="ghost" onPress={() => leaveForm('top')}>
-          {`‹ ${u.back}`}
-        </Button>
-        <Text weight="semibold">{d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule}</Text>
-      </Box>
+      <SubHeader title={d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule} onClose={() => leaveForm('top')} />
       {read(confirmLeave) === 'top' ? confirm : null}
       {d.once ? null : nameField}
       <TerminalPicker
@@ -1177,12 +1226,7 @@ function Settings() {
   }
   return (
     <Stack gap="md">
-      <Box direction="row" align="center" gap="xs">
-        <Button size="sm" variant="ghost" onPress={() => set(settingsOpen, false)}>
-          {`‹ ${u.back}`}
-        </Button>
-        <Text weight="semibold">{u.settings}</Text>
-      </Box>
+      <SubHeader title={u.settings} onClose={() => set(settingsOpen, false)} />
       <RadioGroup
         label={u.language}
         value={read(langPref)}
@@ -1239,11 +1283,12 @@ function Intro() {
           {u.intro.step(i + 1, steps.length)}
         </Text>
       </Box>
+      <Progress label={u.intro.step(i + 1, steps.length)} labelHidden value={Math.round(((i + 1) / steps.length) * 100)} />
       <EmptyState icon={introIcons[i]} title={steps[i].title} description={steps[i].body} />
       <Box direction="row" align="center" gap="xs">
         {i > 0 ? (
           <Button size="sm" variant="ghost" onPress={() => set(introStep, i - 1)}>
-            {`‹ ${u.back}`}
+            {u.intro.prev}
           </Button>
         ) : null}
         <Box grow />

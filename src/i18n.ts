@@ -5,6 +5,13 @@ export type Lang = 'en' | 'ko'
 
 export const langOf = (value: unknown): Lang => (value === 'ko' ? 'ko' : 'en')
 
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+/** Days, hours, minutes and seconds left in `ms`, counting whole seconds. */
+const parts = (ms: number): [number, number, number, number] => {
+  const t = Math.max(0, Math.floor(ms / 1000))
+  return [Math.floor(t / 86400), Math.floor(t / 3600) % 24, Math.floor(t / 60) % 60, t % 60]
+}
+
 /** Each language in its own words — the same in every language. */
 export const langNames: Record<Lang, string> = { en: 'English', ko: '한국어' }
 
@@ -144,7 +151,7 @@ const en = {
     edit: 'Edit',
     remove: 'Delete',
     history: (n: number) => `History (${n})`,
-    back: 'Back',
+    close: 'Close',
     sendOnce: 'Send once',
     sendOnceTip: 'Send a prompt to this terminal once, as soon as it is idle',
     newHere: 'New schedule for this terminal',
@@ -184,6 +191,7 @@ const en = {
       ],
       step: (n: number, of: number) => `${n} / ${of}`,
       skip: 'Skip',
+      prev: 'Back',
       next: 'Next',
       start: 'Get started'
     },
@@ -202,6 +210,14 @@ const en = {
     },
     nextUp: (when: string, name: string) => `Next ${when} · ${name}`,
     noneUp: 'No upcoming runs',
+    until: (ms: number) => {
+      const [d, h, m, sec] = parts(ms)
+      if (ms < 1000) return 'now'
+      if (d > 0) return `in ${d}d ${h}h`
+      if (h > 0) return `in ${h}h ${pad2(m)}m`
+      return `in ${m}m ${pad2(sec)}s`
+    },
+    loading: 'Reading the list',
     today: 'today',
     tomorrow: 'tomorrow'
   },
@@ -338,7 +354,7 @@ const ko: Words = {
     edit: '고치기',
     remove: '지우기',
     history: (n) => `기록 ${n}개`,
-    back: '뒤로',
+    close: '닫기',
     sendOnce: '한 번 보내기',
     sendOnceTip: '이 터미널에 지금 한 번 보냅니다 — 터미널이 한가해지는 대로',
     newHere: '이 터미널에 새 예약',
@@ -378,6 +394,7 @@ const ko: Words = {
       ],
       step: (n, of) => `${n} / ${of}`,
       skip: '건너뛰기',
+      prev: '이전',
       next: '다음',
       start: '시작하기'
     },
@@ -396,6 +413,14 @@ const ko: Words = {
     },
     nextUp: (when, name) => `다음 ${when} · ${name}`,
     noneUp: '다가오는 실행 없음',
+    until: (ms) => {
+      const [d, h, m, sec] = parts(ms)
+      if (ms < 1000) return '곧'
+      if (d > 0) return `${d}일 ${h}시간 뒤`
+      if (h > 0) return `${h}시간 ${pad2(m)}분 뒤`
+      return `${m}분 ${pad2(sec)}초 뒤`
+    },
+    loading: '목록을 읽는 중',
     today: '오늘',
     tomorrow: '내일'
   },

@@ -2,6 +2,7 @@
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
 import type { ScheduleDraft, TerminalOption } from './protocol'
+import { words } from './i18n'
 import * as panel from './panel'
 
 const open: TerminalOption[] = [
@@ -156,8 +157,8 @@ test('a bad time or no terminal keeps Create disabled', async () => {
   await view.type({ label: 'Time 1' }, '25:00', { replace: true })
   assert.ok(view.find({ text: /Check the time fields/ }))
   assert.equal(view.find({ text: 'Create schedule' })?.props.disabled, true)
-  await view.press({ text: '‹ Back' })
-  assert.ok(titled(view, 'Callout', 'Discard what you wrote?'), 'something was typed, so Back asks')
+  await view.press({ type: 'IconButton', label: 'Close' })
+  assert.ok(titled(view, 'Callout', 'Discard what you wrote?'), 'something was typed, so × asks')
   await view.press({ text: 'Discard' })
   assert.ok(view.find({ label: 'No schedules yet' }), 'then returns to the list')
   await view.unmount()
@@ -177,7 +178,7 @@ test("language — Orca's by default, or the one picked in Settings; stored for 
   await view.select({ label: 'Language' }, 'ko')
   assert.equal(view.host.data().storage.lang, 'ko')
   assert.equal(view.host.data().storage.langPref, 'ko')
-  await view.press({ text: '‹ 뒤로' })
+  await view.press({ type: 'IconButton', label: '닫기' })
   assert.ok(view.find({ label: '예약이 없습니다' }))
   await view.unmount()
   const again = await mount(panel, { host: host({}, { storage: { langPref: 'ko' } }) })
@@ -505,7 +506,7 @@ test('send once — terminal, prompt, Send; the name and /clear wait under More 
 test('leaving the form — at once when nothing changed; otherwise asks by the button pressed', async () => {
   const view = await mount(panel, { host: host() })
   await view.press({ type: 'IconButton', label: 'New schedule' })
-  await view.press({ text: '‹ Back' })
+  await view.press({ type: 'IconButton', label: 'Close' })
   assert.ok(view.find({ label: 'No schedules yet' }), 'nothing typed — no question')
   await view.press({ type: 'IconButton', label: 'New schedule' })
   await view.type({ label: 'Prompt' }, 'Long prompt being written')
@@ -517,8 +518,8 @@ test('leaving the form — at once when nothing changed; otherwise asks by the b
   assert.ok(row(asked) > row(view.find({ text: 'Cancel' })), 'asked under Cancel, where the eye is')
   await view.press({ text: 'Keep editing' })
   assert.equal(view.find({ label: 'Prompt' })?.props.value, 'Long prompt being written', 'kept')
-  await view.press({ text: '‹ Back' })
-  assert.equal(row(titled(view, 'Callout', 'Discard what you wrote?')), 1, 'asked right under Back')
+  await view.press({ type: 'IconButton', label: 'Close' })
+  assert.equal(row(titled(view, 'Callout', 'Discard what you wrote?')), 1, 'asked right under ×')
   await view.press({ text: 'Discard' })
   assert.ok(view.find({ label: 'No schedules yet' }))
   await view.unmount()
@@ -562,15 +563,19 @@ test('first open — three pages of introduction, then the Terminals tab when no
   const view = await mount(panel, { host: host({}, { storage: { onboarded: undefined } }) })
   assert.ok(view.find({ label: 'Prompts on a schedule' }), 'page 1 in place of the list')
   assert.ok(view.find({ text: '1 / 3' }))
+  const bar = () => view.find({ type: 'Progress' })?.props.value
+  assert.equal(bar(), 33, 'a bar fills page by page')
   assert.equal(view.find({ type: 'Tabs' }), null, 'no list behind it')
-  assert.equal(view.find({ text: '‹ Back' }), null, 'nothing before page 1')
+  assert.equal(view.find({ text: 'Back' }), null, 'nothing before page 1')
   await view.press({ text: 'Next' })
   assert.ok(view.find({ label: 'Only when the terminal is free' }))
-  await view.press({ text: '‹ Back' })
+  assert.equal(bar(), 67)
+  await view.press({ text: 'Back' })
   assert.ok(view.find({ label: 'Prompts on a schedule' }))
   await view.press({ text: 'Next' })
   await view.press({ text: 'Next' })
   assert.ok(view.find({ label: 'Start from a terminal' }))
+  assert.equal(bar(), 100)
   assert.equal(view.find({ text: 'Skip' }), null, 'the last page only starts')
   await view.press({ text: 'Get started' })
   assert.equal(view.host.data().storage.onboarded, true, 'shown once')
@@ -613,4 +618,44 @@ test('the empty list is one line and a button; how sending works opens under the
   await view.press({ text: 'Open Terminals' })
   assert.equal(view.find({ type: 'Tabs' })?.props.value, 'terminals')
   await view.unmount()
+})
+
+test('time left — seconds under an hour, minutes under a day, in both languages', () => {
+  const en = words('en').ui.until
+  const ko = words('ko').ui.until
+  assert.deepEqual([en(500), en(728_000), en(3_725_000), en(90_000_000)], ['now', 'in 12m 08s', 'in 1h 02m', 'in 1d 1h'])
+  assert.deepEqual([ko(500), ko(728_000), ko(3_725_000), ko(90_000_000)], ['곧', '12분 08초 뒤', '1시간 02분 뒤', '1일 1시간 뒤'])
+})
+
+test('the next run counts down every second while the panel is in view, and rests while hidden', async () => {
+  const view = await mount(panel, { host: host() })
+  const s: Schedule = { ...blankSchedule('a'), name: 'Morning report', terminal: { ...open[0] }, enabled: true, nextRunAt: Date.now() + 728_500 }
+  await view.post('schedules.changed', { schedules: [s] })
+  const left = () => view.find({ text: /^in 12m \d\ds$/ })?.text ?? null
+  const first = left()
+  assert.ok(first, 'beside what runs next')
+  await new Promise((r) => setTimeout(r, 1600))
+  await view.settled()
+  assert.notEqual(left(), first, 'a second later it moved')
+  await view.setVisible(false)
+  const hidden = left()
+  await new Promise((r) => setTimeout(r, 1600))
+  await view.settled()
+  assert.equal(left(), hidden, 'not redrawn while nobody sees it')
+  await view.unmount()
+})
+
+test('a run being sent spins; before the first answer both tabs show a placeholder', async () => {
+  const view = await mount(panel, { host: host() })
+  await view.post('schedules.changed', { schedules: [{ ...blankSchedule('a'), name: 'Morning report', terminal: { ...open[0] }, sentAt: Date.now() }] })
+  assert.ok(view.find({ type: 'Spinner', label: 'Running · sent' }))
+  assert.equal(view.find({ type: 'Skeleton' }), null, 'answered, so no placeholder')
+  await view.unmount()
+  // The component alone, before setup has asked the worker anything.
+  const early = await mount(panel.default!, { host: host() })
+  assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }), 'not "No schedules yet" yet')
+  assert.equal(early.find({ label: 'No schedules yet' }), null)
+  await early.select({ type: 'Tabs' }, 'terminals')
+  assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }))
+  await early.unmount()
 })

@@ -1,9 +1,9 @@
 {
   "manifestVersion": 2,
   "id": "agent-cron",
-  "name": "OrcaCron 예약",
-  "version": "0.2.0",
-  "description": "정해진 시각마다 고른 워크스페이스에 Claude Code·Codex·Gemini CLI 를 새로 띄워 글을 보내고, 끝났는지 지켜봅니다. 띄우기는 Orca CLI 로 합니다.",
+  "name": "Agent Scheduler",
+  "version": "0.4.0",
+  "description": "Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times — every day, on weekdays, on picked days or dates, or every N minutes. It waits until the terminal is idle, sends through the Orca CLI, and records when the agent finishes. English and Korean.",
   "author": {
     "name": "gook-lab",
     "url": "https://github.com/gook-lab"
@@ -20,7 +20,7 @@
     "panels": [
       {
         "id": "agent-cron",
-        "title": "OrcaCron 예약",
+        "title": "Agent Scheduler",
         "icon": "calendar",
         "entry": "src/panel.tsx",
         "ui": "components"
@@ -34,9 +34,9 @@
     "statusBarItems": [
       {
         "id": "next",
-        "text": "예약",
+        "text": "Schedules",
         "icon": "calendar",
-        "tooltip": "OrcaCron 예약"
+        "tooltip": "Agent Scheduler"
       }
     ]
   },

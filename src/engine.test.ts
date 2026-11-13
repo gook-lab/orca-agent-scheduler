@@ -1,279 +1,360 @@
 import { assert, test } from 'orca/testing'
-import { blankSchedule, inspectOnEvent, type Io, limits, newMemory, onAgentStatus, type Schedule, tick } from './engine'
+import {
+  blankSchedule,
+  inspectOnEvent,
+  type Io,
+  limits,
+  type LiveTerminal,
+  locate,
+  newMemory,
+  onAgentStatus,
+  type Schedule,
+  type SendResult,
+  tick
+} from './engine'
 
 const rule = '──────────────────────────────'
-const idle = ['❯ 오늘 할 일', '⏺ 끝', rule, '❯ ', rule]
-/** 에이전트만 뜨고 글은 안 들어간 화면. */
-const fresh = ['Claude Code', rule, '❯\u00a0Try "fix lint errors"', rule]
-
-function fakeIo(screens: Record<string, string[] | null | 'error'> = {}, launchError?: string, alive: Set<string> | null = null) {
-  const launched: [string, string, string][] = []
-  const io: Io = {
-    async read(id) {
-      const s = screens[id]
-      if (s === 'error') throw new Error('busy')
-      return s === undefined ? null : s
-    },
-    async launch(workspaceId, agent, prompt) {
-      if (launchError) return { error: launchError }
-      launched.push([workspaceId, agent, prompt])
-      return { terminalId: `t${launched.length}` }
-    },
-    async alive() {
-      return alive
-    }
-  }
-  return { io, launched, screens }
-}
-
-function sched(over: Partial<Schedule> = {}): Schedule {
-  return { ...blankSchedule('s1'), name: '아침', workspaceId: 'w1', workspace: 'docs', agent: 'claude', cron: '0 9 * * *', prompt: '오늘 할 일', ...over }
-}
+const idle = ['⏺ done', rule, '❯ ', rule]
+const typing = ['⏺ done', rule, '❯ half-written', rule]
+const question = ['  1. Yes', '  2. No', 'Enter to select · ↑/↓ to navigate · Esc to cancel']
+const permission = ['Do you want to proceed?', '❯ 1. Yes', '  2. No']
+const working = ['⏺ Reading files…', '✻ Thinking (esc to interrupt)']
 
 const nine = new Date(2026, 10, 13, 9, 0).getTime()
 const min = 60_000
 
-test('시각이 되면 고른 워크스페이스에 새 에이전트를 띄워 글을 넣는다', async () => {
+function term(over: Partial<LiveTerminal> = {}): LiveTerminal {
+  return { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', tabId: 'tab1', leafId: 'leaf1', lastOutputAt: nine - 10 * min, ...over }
+}
+
+/** A fake Orca: open terminals, screens by handle, and what it was sent. */
+function fakeIo(opts: { live?: LiveTerminal[] | null; screens?: Record<string, string[] | null | 'error'>; send?: SendResult } = {}) {
+  const sent: [string, string][] = []
+  const state = { live: opts.live === undefined ? [term()] : opts.live, screens: opts.screens ?? { h1: idle }, send: opts.send ?? { started: true } }
+  const io: Io = {
+    async read(handle) {
+      const s = state.screens[handle]
+      if (s === 'error') throw new Error('busy')
+      return s === undefined ? null : s
+    },
+    async send(handle, text) {
+      if ('error' in state.send) return state.send
+      sent.push([handle, text])
+      return state.send
+    },
+    async terminals() {
+      return state.live
+    }
+  }
+  return { io, sent, state }
+}
+
+function sched(over: Partial<Schedule> = {}): Schedule {
+  return {
+    ...blankSchedule('s1'),
+    name: 'Morning',
+    terminal: { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'docs', tabId: 'tab1', leafId: 'leaf1' },
+    cron: '0 9 * * *',
+    prompt: 'Plan the day',
+    ...over
+  }
+}
+
+test('at the set time, an idle terminal gets the prompt', async () => {
   const s = sched({ nextRunAt: nine })
   const f = fakeIo()
-  await tick([s], f.io, newMemory(), nine + 10_000)
-  assert.deepEqual(f.launched, [['w1', 'claude', '오늘 할 일']])
-  assert.equal(s.terminalId, 't1')
+  const r = await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
   assert.equal(s.sentAt, nine + 10_000)
+  assert.equal(s.sawWorking, true, 'turn start seen while sending counts as working')
   assert.equal(s.pendingSince, null)
-  assert.equal(s.lastStatus, '보냄')
-  assert.equal(s.nextRunAt, new Date(2026, 10, 14, 9, 0).getTime())
+  assert.equal(s.lastStatus, 'sent')
+  assert.ok(s.nextRunAt && s.nextRunAt > nine, 'next run moves to tomorrow')
+  assert.deepEqual(r.notices, [])
 })
 
-test('띄우지 못하면 실패로 남기고 알린다', async () => {
-  const s = sched({ pendingSince: nine })
-  const r = await tick([s], fakeIo({}, 'workspace not found').io, newMemory(), nine)
-  assert.equal(s.history[0].status, '실패')
-  assert.match(s.history[0].summary ?? '', /workspace not found/)
-  assert.equal(s.sentAt, null)
-  assert.equal(s.pendingSince, null)
-  assert.equal(r.notices.length, 1)
+test('turn start not seen — sent, and the working event decides', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ send: { started: false } })
+  await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.ok(s.sentAt)
+  assert.equal(s.sawWorking, false)
 })
 
-test('지난 회차가 아직 돌면 기다렸다가, 60분 넘으면 이번 회차를 건너뛴다', async () => {
-  const s = sched({ sentAt: nine - 10 * min, terminalId: 't9', delivered: true, sawWorking: true, nextRunAt: nine })
-  const f = fakeIo({ t9: ['작업 중 ⠋'] })
+test('waits while the terminal printed within the last minute, then sends', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [term({ lastOutputAt: nine - 20_000 })] })
+  await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [])
+  assert.deepEqual(s.waitNote, { code: 'moving' })
+  f.state.live = [term({ lastOutputAt: nine - 20_000 })]
+  await tick([s], f.io, newMemory(), nine + 45_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'quiet for 65 s')
+})
+
+test('without lastOutputAt, a screen seen still for a minute counts as quiet', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [term({ lastOutputAt: null })] })
+  const memory = newMemory()
+  await tick([s], f.io, memory, nine + 10_000)
+  assert.deepEqual(s.waitNote, { code: 'moving' }, 'first sight')
+  await tick([s], f.io, memory, nine + 40_000)
+  assert.deepEqual(f.sent, [])
+  await tick([s], f.io, memory, nine + 70_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+})
+
+test('waits for text left in the input box, a dialog, or a missing input box — then skips after 60 minutes', async () => {
+  for (const [screen, code] of [
+    [typing, 'typing'],
+    [permission, 'dialog'],
+    [working, 'noPrompt']
+  ] as const) {
+    const s = sched({ nextRunAt: nine })
+    const f = fakeIo({ screens: { h1: [...screen] } })
+    await tick([s], f.io, newMemory(), nine + 10_000)
+    assert.deepEqual(s.waitNote, { code }, code)
+    const r = await tick([s], f.io, newMemory(), nine + limits.maxWaitMs)
+    assert.equal(s.pendingSince, null)
+    assert.equal(s.history[0].status, 'skipped')
+    assert.deepEqual(s.history[0].note, { code: 'waitedOut', reason: code })
+    assert.equal(r.notices.length, 1)
+    assert.deepEqual(f.sent, [], `never sent (${code})`)
+  }
+})
+
+test('a stale "working" state stops blocking once the screen has been still for 3 minutes', async () => {
+  const memory = newMemory()
+  memory.agents.set('h1', 'working')
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [term({ lastOutputAt: nine - 2 * min })] })
+  await tick([s], f.io, memory, nine)
+  assert.deepEqual(s.waitNote, { code: 'busy' })
+  f.state.live = [term({ lastOutputAt: nine - 2 * min })]
+  await tick([s], f.io, memory, nine + 61_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+})
+
+test('a terminal that is gone is waited for; after Orca restarts it is found again by pane', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [] })
   await tick([s], f.io, newMemory(), nine)
-  assert.equal(f.launched.length, 0)
-  assert.match(s.waitNote ?? '', /지난 회차/)
-  await tick([s], f.io, newMemory(), nine + limits.maxWaitMs)
-  assert.equal(s.history[0].status, '건너뜀')
-  assert.equal(s.pendingSince, null)
-  assert.equal(f.launched.length, 0)
+  assert.deepEqual(s.waitNote, { code: 'missing' })
+  f.state.live = [term({ handle: 'h9', title: 'Morning (renamed)' })]
+  f.state.screens = { h9: idle }
+  await tick([s], f.io, newMemory(), nine + 30_000)
+  assert.deepEqual(f.sent, [['h9', 'Plan the day']])
+  assert.equal(s.terminal.handle, 'h9')
+  assert.equal(s.terminal.title, 'Morning (renamed)')
 })
 
-test('지난 회차가 끝나면 기다리던 회차를 띄운다', async () => {
-  const s = sched({ sentAt: nine - 10 * min, terminalId: 't9', delivered: true, sawWorking: true, pendingSince: nine })
-  onAgentStatus([s], { terminalId: 't9', state: 'done', receivedAt: nine + min })
-  assert.equal(s.history[0].status, '끝남')
+test('locate — by handle first, then by pane id', () => {
+  const ref = sched().terminal
+  assert.equal(locate(ref, [term({ handle: 'h1', leafId: 'other' })])?.handle, 'h1')
+  assert.equal(locate(ref, [term({ handle: 'h2', leafId: 'leaf1' })])?.handle, 'h2')
+  assert.equal(locate(ref, [term({ handle: 'h2', leafId: 'other' })]), null)
+  assert.equal(locate({ ...ref, leafId: '' }, [term({ handle: 'h2', leafId: '' })]), null, 'no pane id, no guess')
+})
+
+test('a terminal where only a shell is left is never sent to', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [term({ agent: null })] })
+  await tick([s], f.io, newMemory(), nine)
+  assert.deepEqual(s.waitNote, { code: 'noAgent' })
+  assert.deepEqual(f.sent, [])
+})
+
+test('when the terminal list cannot be read, waits', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: null })
+  await tick([s], f.io, newMemory(), nine)
+  assert.deepEqual(s.waitNote, { code: 'cli' })
+  assert.deepEqual(f.sent, [])
+})
+
+test('new conversation — /clear first, the prompt once the screen settles again', async () => {
+  const s = sched({ nextRunAt: nine, clearFirst: true })
   const f = fakeIo()
-  await tick([s], f.io, newMemory(), nine + 2 * min)
-  assert.equal(f.launched.length, 1)
-  assert.equal(s.terminalId, 't1')
-})
-
-test('상태 알림 — 일하다 멈추면 성공·실패로 기록, 권한 창이면 알린다', () => {
-  const s = sched({ sentAt: nine, terminalId: 't1', delivered: true })
-  onAgentStatus([s], { terminalId: 't1', state: 'done', receivedAt: nine + 1000 })
-  assert.equal(s.sentAt, nine, '일을 시작하기 전의 done 은 무시')
-  onAgentStatus([s], { terminalId: 't2', state: 'working', receivedAt: nine + 1500 })
-  assert.equal(s.sawWorking, false, '다른 터미널 알림은 무시')
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 2000 })
-  const blocked = onAgentStatus([s], { terminalId: 't1', state: 'blocked', receivedAt: nine + 3000 })
-  assert.ok(s.blocked)
-  assert.equal(blocked.notices.length, 1)
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 4000 })
-  assert.equal(s.blocked, null)
-  onAgentStatus([s], {
-    terminalId: 't1',
-    state: 'done',
-    receivedAt: nine + 5 * min,
-    mainAgent: { state: 'done', outcome: 'success', stateStartedAt: nine + 5 * min }
-  })
+  await tick([s], f.io, newMemory(), nine)
+  assert.deepEqual(f.sent, [['h1', '/clear']])
+  assert.deepEqual(s.waitNote, { code: 'cleared' })
   assert.equal(s.sentAt, null)
-  assert.equal(s.history[0].status, '성공')
-  assert.equal(s.history[0].summary, '걸린 시간 5분')
-  const other = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-  const waiting = onAgentStatus([other], { terminalId: 't1', state: 'waiting', receivedAt: nine + min })
-  assert.equal(other.history[0].status, '끝남(입력 대기)')
-  assert.equal(waiting.notices.length, 1, '질문에 답을 기다리면 알린다')
-  const done = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-  assert.equal(onAgentStatus([done], { terminalId: 't1', state: 'done', receivedAt: nine + min }).notices.length, 0, '그냥 끝나면 알리지 않는다')
+  // /clear redrew the screen
+  f.state.live = [term({ lastOutputAt: nine + 1_000 })]
+  await tick([s], f.io, newMemory(), nine + 30_000)
+  assert.equal(f.sent.length, 1, 'still settling')
+  await tick([s], f.io, newMemory(), nine + 62_000)
+  assert.deepEqual(f.sent, [
+    ['h1', '/clear'],
+    ['h1', 'Plan the day']
+  ])
+  assert.ok(s.sentAt)
 })
 
-test('상태 알림이 없으면 화면이 3분 조용하고 입력 칸이 비었을 때 끝난 것으로 본다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  const memory = newMemory()
-  const f = fakeIo({ t1: idle })
-  await tick([s], f.io, memory, nine + min)
-  assert.notEqual(s.sentAt, null, '처음 본 화면은 조용한지 모름')
-  await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.equal(s.sentAt, null)
-  assert.equal(s.history[0].status, '끝남')
-  assert.match(s.history[0].summary ?? '', /화면 기준/)
+test('two schedules on one terminal — one per check', async () => {
+  const a = sched({ id: 'a', nextRunAt: nine })
+  const b = sched({ id: 'b', name: 'Second', prompt: 'Second prompt', nextRunAt: nine })
+  const f = fakeIo()
+  await tick([a, b], f.io, newMemory(), nine)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+  assert.deepEqual(b.waitNote, { code: 'sameTerminal' })
 })
 
-test('일을 시작했다는 알림을 받았어도 끝 알림을 놓치면 화면으로 끝낸다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-  const memory = newMemory()
-  const f = fakeIo({ t1: idle })
-  await tick([s], f.io, memory, nine + min)
-  await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.equal(s.history[0].status, '끝남')
-})
-
-test('입력 칸이 안 보인 채 화면이 멈추면 확인해 달라고 한 번 알리고, 화면이 움직이면 거둔다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1', agent: 'codex' })
-  const memory = newMemory()
-  const dialog = ['Update available', '› 1. Update now', '  2. Skip']
-  const f = fakeIo({ t1: dialog })
-  await tick([s], f.io, memory, nine + min)
-  const r = await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.match(s.blocked ?? '', /입력 칸이 보이지 않은 채/)
+test('a failed send is recorded with the reason', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ send: { error: 'terminal_handle_stale' } })
+  const r = await tick([s], f.io, newMemory(), nine)
+  assert.equal(s.history[0].status, 'failed')
+  assert.deepEqual(s.history[0].note, { code: 'sendFailed', detail: 'terminal_handle_stale' })
+  assert.equal(s.pendingSince, null)
   assert.equal(r.notices.length, 1)
-  const again = await tick([s], f.io, memory, nine + 2 * min + limits.finishedQuietMs)
-  assert.equal(again.notices.length, 0, '같은 멈춤은 다시 알리지 않음')
-  assert.equal(s.sentAt, nine, '멈춤은 끝이 아님')
-  f.screens.t1 = ['작업 중', '› ']
-  await tick([s], f.io, memory, nine + 3 * min + limits.finishedQuietMs)
+})
+
+test('a run due while the previous one still runs waits for it, and gives up after 60 minutes', async () => {
+  const s = sched({ sentAt: nine - 10 * min, pendingSince: nine, nextRunAt: nine + 24 * 60 * min })
+  const f = fakeIo({ live: [term({ lastOutputAt: nine })] })
+  await tick([s], f.io, newMemory(), nine + min)
+  assert.deepEqual(s.waitNote, { code: 'previous' })
+  assert.deepEqual(f.sent, [])
+  f.state.live = [term({ lastOutputAt: nine + limits.maxWaitMs })]
+  await tick([s], f.io, newMemory(), nine + limits.maxWaitMs)
+  assert.equal(s.history[0].status, 'skipped')
+  assert.deepEqual(s.history[0].note, { code: 'waitedOut', reason: 'previous' })
+})
+
+test('agent status — working then done ends the run', () => {
+  const s = sched({ sentAt: nine, sawWorking: false })
+  onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: nine + 1_000 })
+  assert.ok(s.sentAt, 'done before working is not an end')
+  onAgentStatus([s], { terminalId: 'h1', state: 'working', receivedAt: nine + 2_000 })
+  const r = onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: nine + 4 * min })
+  assert.equal(s.sentAt, null)
+  assert.deepEqual(s.history[0], { at: nine + 4 * min, status: 'done', tookMs: 4 * min })
+  assert.deepEqual(r.notices, [], 'a plain end is quiet')
+})
+
+test('agent status — outcome and waiting', () => {
+  const ok = sched({ sentAt: nine, sawWorking: true })
+  onAgentStatus([ok], { terminalId: 'h1', state: 'done', receivedAt: nine, mainAgent: { state: 'done', outcome: 'success', stateStartedAt: nine } })
+  assert.equal(ok.history[0].status, 'success')
+  const asking = sched({ sentAt: nine, sawWorking: true })
+  const r = onAgentStatus([asking], { terminalId: 'h1', state: 'waiting', receivedAt: nine })
+  assert.equal(asking.history[0].status, 'doneWaiting')
+  assert.deepEqual(r.notices, [{ name: 'Morning', status: 'doneWaiting' }])
+  const other = sched({ sentAt: nine, sawWorking: true })
+  onAgentStatus([other], { terminalId: 'h2', state: 'done', receivedAt: nine })
+  assert.ok(other.sentAt, 'another terminal')
+})
+
+test('agent status — blocked asks for a person once', () => {
+  const s = sched({ sentAt: nine, sawWorking: true })
+  const a = onAgentStatus([s], { terminalId: 'h1', state: 'blocked', receivedAt: nine })
+  const b = onAgentStatus([s], { terminalId: 'h1', state: 'blocked', receivedAt: nine })
+  assert.deepEqual(s.blocked, { code: 'person' })
+  assert.equal(a.notices.length + b.notices.length, 1)
+  onAgentStatus([s], { terminalId: 'h1', state: 'working', receivedAt: nine })
   assert.equal(s.blocked, null)
 })
 
-test('권한 창에서 멈추면 그 이유로 알린다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  const memory = newMemory()
-  const f = fakeIo({ t1: ['Do you want to proceed?', '❯ 1. Yes', '  2. No'] })
-  await tick([s], f.io, memory, nine + min)
-  await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.match(s.blocked ?? '', /권한·질문 창/)
+test('a stop event on a question or permission dialog holds the run instead of ending it', async () => {
+  for (const screen of [question, permission]) {
+    const s = sched({ sentAt: nine, sawWorking: true })
+    const f = fakeIo({ screens: { h1: [...screen] } })
+    const first = await inspectOnEvent([s], { terminalId: 'h1', state: 'done', receivedAt: nine }, f.io)
+    assert.equal(first.hold, true)
+    assert.deepEqual(s.blocked, { code: 'person' })
+    assert.equal(first.notices.length, 1)
+    const again = await inspectOnEvent([s], { terminalId: 'h1', state: 'waiting', receivedAt: nine }, f.io)
+    assert.equal(again.hold, true)
+    assert.equal(again.notices.length, 0, 'no repeat notice')
+  }
+  const s = sched({ sentAt: nine, sawWorking: true })
+  const f = fakeIo()
+  assert.equal((await inspectOnEvent([s], { terminalId: 'h1', state: 'done', receivedAt: nine }, f.io)).hold, false, 'idle screen')
 })
 
-test('띄운 터미널이 닫히면 중단으로 남기고, 잠깐 못 읽으면 다음에 다시 본다', async () => {
-  // 플러그인의 화면 읽기는 닫힌 터미널에도 빈 화면을 돌려줄 수 있어 살아 있는 터미널 목록으로 판정한다.
-  const closed = sched({ sentAt: nine, terminalId: 't1' })
-  await tick([closed], fakeIo({ t1: [] }, undefined, new Set(['t2'])).io, newMemory(), nine + min)
-  assert.equal(closed.history[0].status, '중단')
-  assert.match(closed.history[0].summary ?? '', /닫혀/)
-  const busy = sched({ sentAt: nine, terminalId: 't1' })
-  await tick([busy], fakeIo({ t1: 'error' }).io, newMemory(), nine + min)
-  assert.equal(busy.history.length, 0)
-  assert.equal(busy.sentAt, nine)
+test('stop events wait settleMs before reading — the dialog is drawn a moment after the event', async () => {
+  for (const [settle, hold] of [
+    [0, false],
+    [60, true]
+  ] as const) {
+    const s = sched({ sentAt: nine, sawWorking: true })
+    const f = fakeIo()
+    setTimeout(() => (f.state.screens = { h1: [...question] }), 10)
+    const r = await inspectOnEvent([s], { terminalId: 'h1', state: 'done', receivedAt: nine }, f.io, settle)
+    assert.equal(r.hold, hold, `settle ${settle}`)
+  }
 })
 
-test('6시간 넘게 안 끝나면 결과 없음', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-  await tick([s], fakeIo({ t1: idle }).io, newMemory(), nine + limits.resultTimeoutMs)
-  assert.equal(s.history[0].status, '결과 없음')
+test('working events do not read the screen', async () => {
+  let reads = 0
+  const s = sched({ sentAt: nine })
+  const f = fakeIo()
+  const io: Io = { ...f.io, read: async (h) => (reads++, f.io.read(h)) }
+  await inspectOnEvent([s], { terminalId: 'h1', state: 'working', receivedAt: nine }, io)
+  assert.equal(reads, 0)
+})
+
+test('watch — a closed terminal stops the run', async () => {
+  const s = sched({ sentAt: nine })
+  const f = fakeIo({ live: [] })
+  await tick([s], f.io, newMemory(), nine + min)
   assert.equal(s.sentAt, null)
+  assert.deepEqual(s.history[0].note, { code: 'closed' })
+  assert.equal(s.history[0].status, 'aborted')
 })
 
-test('꺼 둔 예약은 대기에 올리지 않는다', async () => {
+test('watch — a missed end event: quiet 3 minutes with an empty input box is done', async () => {
+  const s = sched({ sentAt: nine })
+  const f = fakeIo({ live: [term({ lastOutputAt: nine + 2 * min })] })
+  await tick([s], f.io, newMemory(), nine + 4 * min)
+  assert.ok(s.sentAt, 'quiet for 2 minutes only')
+  await tick([s], f.io, newMemory(), nine + 5 * min)
+  assert.equal(s.sentAt, null)
+  assert.equal(s.history[0].status, 'done')
+  assert.deepEqual(s.history[0].note, { code: 'byScreen' })
+})
+
+test('watch — quiet but stuck asks for a person once, and clears when the screen moves', async () => {
+  const s = sched({ sentAt: nine })
+  const memory = newMemory()
+  const f = fakeIo({ live: [term({ lastOutputAt: nine })], screens: { h1: [...typing] } })
+  const a = await tick([s], f.io, memory, nine + 4 * min)
+  const b = await tick([s], f.io, memory, nine + 5 * min)
+  assert.deepEqual(s.blocked, { code: 'stuckTyping' })
+  assert.equal(a.notices.length + b.notices.length, 1)
+  f.state.screens = { h1: [...working] }
+  f.state.live = [term({ lastOutputAt: nine + 5 * min })]
+  await tick([s], f.io, memory, nine + 6 * min)
+  assert.equal(s.blocked, null)
+  assert.ok(s.sentAt)
+})
+
+test('watch — no end in 6 hours is "no result"', async () => {
+  const s = sched({ sentAt: nine })
+  const f = fakeIo()
+  const r = await tick([s], f.io, newMemory(), nine + limits.resultTimeoutMs)
+  assert.equal(s.history[0].status, 'noResult')
+  assert.deepEqual(r.notices, [{ name: 'Morning', status: 'noResult' }])
+})
+
+test('disabled schedules never go due', async () => {
   const s = sched({ enabled: false, nextRunAt: nine })
   const f = fakeIo()
   await tick([s], f.io, newMemory(), nine + min)
-  assert.equal(s.pendingSince, null)
   assert.equal(s.nextRunAt, null)
-  assert.equal(f.launched.length, 0)
+  assert.equal(s.pendingSince, null)
+  assert.deepEqual(f.sent, [])
 })
 
-test('글이 화면에 보이기 전의 상태 알림은 시작 과정으로 보고 무시한다', () => {
-  const s = sched({ sentAt: nine, terminalId: 't1', agent: 'codex' })
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 1000 })
-  onAgentStatus([s], { terminalId: 't1', state: 'done', receivedAt: nine + 2000 })
-  assert.equal(s.sentAt, nine)
-  assert.equal(s.history.length, 0)
-})
-
-test('글이 화면에 보이면 들어간 것으로 기록하고, 그 뒤 상태 알림으로 끝낸다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  await tick([s], fakeIo({ t1: ['❯ 오늘 할 일', '⠋ 작업 중'] }).io, newMemory(), nine + 30_000)
-  assert.equal(s.delivered, true)
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 40_000 })
-  onAgentStatus([s], { terminalId: 't1', state: 'done', receivedAt: nine + 2 * min, mainAgent: { state: 'done', outcome: 'success', stateStartedAt: nine } })
-  assert.equal(s.history[0].status, '성공')
-})
-
-test('확인 전에 끝나는 짧은 일 — 알림이 오면 그 자리에서 화면을 읽어 글을 확인하고 알림으로 끝낸다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  const f = fakeIo({ t1: fresh })
-  // 띄운 직후 — 글이 아직 화면에 없으니 시작 과정 알림은 그대로 버린다(Codex 의 시작 working → done)
-  assert.equal((await inspectOnEvent([s], { terminalId: 't1', state: 'working', receivedAt: nine + 1000 }, f.io)).changed, false)
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 1000 })
-  assert.equal((await inspectOnEvent([s], { terminalId: 't1', state: 'done', receivedAt: nine + 2000 }, f.io)).changed, false)
-  onAgentStatus([s], { terminalId: 't1', state: 'done', receivedAt: nine + 2000 })
-  assert.equal(s.history.length, 0)
-  // 글이 들어가 일을 시작 — 30초 확인 전이어도 알림 때 화면으로 확인한다
-  f.screens.t1 = ['❯ 오늘 할 일', '⠋ 작업 중']
-  assert.equal((await inspectOnEvent([s], { terminalId: 't1', state: 'working', receivedAt: nine + 5000 }, f.io)).changed, true)
-  onAgentStatus([s], { terminalId: 't1', state: 'working', receivedAt: nine + 5000 })
-  onAgentStatus([s], { terminalId: 't1', state: 'done', receivedAt: nine + 9000 })
-  assert.equal(s.history[0].status, '끝남')
-  assert.equal(s.sentAt, null)
-  // 다른 터미널·못 읽는 화면은 건드리지 않는다
-  const other = sched({ id: 's2', sentAt: nine, terminalId: 't2' })
-  assert.equal((await inspectOnEvent([other], { terminalId: 't2', state: 'working', receivedAt: nine }, fakeIo({ t2: 'error' }).io)).changed, false)
-  assert.equal((await inspectOnEvent([other], { terminalId: 't3', state: 'working', receivedAt: nine }, fakeIo({ t2: ['❯ 오늘 할 일'] }).io)).changed, false)
-  assert.equal(other.delivered, false)
-})
-
-test('멈춤 알림 때 화면에 권한·질문 창이 떠 있으면 끝내지 않고 사람을 기다린다고 알린다', async () => {
-  // Claude Code 질문 창 실화면(2026-11-13) — Orca 는 이때 waiting 도, done 도 낸다
-  const question = ['❯ 오늘 할 일', '  1. 예', '  2. 아니오', rule, '  3. Chat about this', 'Enter to select · ↑/↓ to navigate · Esc to cancel']
-  for (const state of ['done', 'waiting'] as const) {
-    const s = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-    const f = fakeIo({ t1: question })
-    const seen = await inspectOnEvent([s], { terminalId: 't1', state, receivedAt: nine + min }, f.io)
-    assert.equal(seen.hold, true, state)
-    assert.equal(seen.notices.length, 1)
-    assert.match(s.blocked ?? '', /권한·질문 창/)
-    assert.equal((await inspectOnEvent([s], { terminalId: 't1', state, receivedAt: nine + 2 * min }, f.io)).notices.length, 0, '두 번 알리지 않는다')
-    assert.equal(s.sentAt, nine)
-    assert.equal(s.history.length, 0)
-  }
-  // 일하는 중 알림은 화면을 읽지 않고, 그냥 끝난 화면이면 hold 가 아니다
-  const s = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-  let reads = 0
-  const counting: Io = { ...fakeIo().io, read: async () => (reads++, question) }
-  assert.equal((await inspectOnEvent([s], { terminalId: 't1', state: 'working', receivedAt: nine }, counting)).hold, false)
-  assert.equal(reads, 0, '글을 확인한 뒤의 working 알림마다 화면을 읽지 않는다')
-  assert.equal((await inspectOnEvent([s], { terminalId: 't1', state: 'done', receivedAt: nine }, fakeIo({ t1: idle }).io)).hold, false)
-})
-
-test('질문 창은 첫 멈춤 알림보다 늦게 그려진다 — 잠깐 기다렸다 읽어야 끝으로 잘못 남기지 않는다', async () => {
-  const question = ['  1. 예', '  2. 아니오', 'Enter to select · ↑/↓ to navigate · Esc to cancel']
-  const run = async (settleMs: number) => {
-    const s = sched({ sentAt: nine, terminalId: 't1', delivered: true, sawWorking: true })
-    const f = fakeIo({ t1: idle })
-    setTimeout(() => (f.screens.t1 = question), 10) // 실측: 첫 waiting 0.16초 뒤에 그려짐
-    return inspectOnEvent([s], { terminalId: 't1', state: 'waiting', receivedAt: nine }, f.io, settleMs)
-  }
-  assert.equal((await run(0)).hold, false, '바로 읽으면 빈 입력 칸만 보인다')
-  assert.equal((await run(60)).hold, true)
-})
-
-test('에이전트만 뜨고 글이 안 들어간 채 조용하면 「끝남」이 아니라 실패로 남긴다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  const memory = newMemory()
-  const f = fakeIo({ t1: fresh })
-  await tick([s], f.io, memory, nine + min)
-  const r = await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.equal(s.history[0].status, '실패')
-  assert.match(s.history[0].summary ?? '', /글이 화면에 보이지 않음/)
-  assert.equal(s.sentAt, null)
-  assert.equal(r.notices.length, 1)
-})
-
-test('입력 칸에 글이 남은 채 멈추면 보내지지 않았다고 알린다', async () => {
-  const s = sched({ sentAt: nine, terminalId: 't1' })
-  const memory = newMemory()
-  const f = fakeIo({ t1: ['Claude Code', rule, '❯ 오늘 할 일', rule] })
-  await tick([s], f.io, memory, nine + min)
-  await tick([s], f.io, memory, nine + min + limits.finishedQuietMs)
-  assert.match(s.blocked ?? '', /입력 칸에 글이 남은 채/)
-  assert.equal(s.sentAt, nine)
+test('send once — goes out when idle, then never comes due again (no cron, so no next run)', async () => {
+  const s = sched({ once: true, cron: '', pendingSince: nine })
+  const f = fakeIo()
+  await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+  assert.equal(s.nextRunAt, null)
+  s.sentAt = null
+  await tick([s], f.io, newMemory(), nine + 24 * 60 * min)
+  assert.equal(s.pendingSince, null, 'no times — nothing comes due')
+  assert.equal(f.sent.length, 1)
 })

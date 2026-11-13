@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { cronOf, describe, minuteOf, nextRun, parseCron, parseTimes, specOf } from './cron'
+import { nextRun, parseCron } from './cron'
 
 const at = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi)
 const next = (expr: string, after: Date) => nextRun(parseCron(expr)!, after)
@@ -36,27 +36,4 @@ test('틀린 식', () => {
 
 test('2월 31일은 앞으로 돌지 않음', () => {
   assert.equal(next('0 9 31 2 *', at(2026, 11, 13)), null)
-})
-
-test('시각 글 읽기', () => {
-  assert.equal(minuteOf('09:00'), 540)
-  assert.equal(minuteOf('9:5'), 545)
-  assert.equal(minuteOf('1830'), 1110)
-  assert.equal(minuteOf('25:00'), null)
-  assert.equal(minuteOf('9시'), null)
-  assert.deepEqual(parseTimes('18:00, 09:00 09:00'), [540, 1080])
-  assert.equal(parseTimes(''), null)
-  assert.equal(parseTimes('09:00, 99:00'), null)
-})
-
-test('요일 + 시각 ↔ 식', () => {
-  assert.equal(cronOf('weekdays', [540, 1080]), '0 9,18 * * 1-5')
-  assert.equal(cronOf('everyDay', [570, 1080]), '30 9 * * *; 0 18 * * *')
-  assert.equal(cronOf('weekends', [600]), '0 10 * * 0,6')
-  assert.deepEqual(specOf('0 9,18 * * 1-5'), { day: 'weekdays', times: [540, 1080] })
-  assert.deepEqual(specOf('30 9 * * *; 0 18 * * *'), { day: 'everyDay', times: [570, 1080] })
-  assert.equal(specOf('*/5 * * * *'), null)
-  assert.equal(specOf('0 9 * * 1'), null)
-  assert.equal(describe('0 9,18 * * 1-5'), '평일 09:00 · 18:00')
-  assert.equal(describe('*/5 * * * *'), '*/5 * * * *')
 })

@@ -1,54 +1,92 @@
-# OrcaCron 예약 — Orca 플러그인 시험판
+# Agent Scheduler — Orca plugin
 
-정해진 시각마다 고른 워크스페이스에 Claude Code·Codex·Gemini CLI 를 새로 띄워 글을 보내는 Orca 플러그인입니다. 메뉴 막대 앱 [OrcaCron](https://github.com/gook-lab/orca-cron) 을 Orca 안으로 옮기는 시험판이며, 앱과 데이터를 나누지 않습니다.
+Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times. It waits until that terminal is idle, sends through the Orca CLI, and records when the agent finishes. The plugin grew out of the menubar app [OrcaCron](https://github.com/gook-lab/orca-cron) and keeps its own schedules; the two do not share data.
 
-## 보내는 방식 — 회차마다 새 에이전트
+The panel is in English by default. Switch to Korean with the language menu at its top right; the status bar and notifications follow.
 
-시각이 되면 고른 워크스페이스에 고른 에이전트를 새 터미널로 띄우고 보낼 글을 넣습니다. 매번 새 대화로 시작하므로 보낼 글은 그것만 읽고도 할 일을 알 수 있게 씁니다.
+## Target — a terminal you pick
 
-띄우기는 플러그인 API 가 아니라 worker 안에서 Orca CLI(`orca agent launch --surface terminal --worktree … --prompt …`)로 합니다. CLI 는 실행 중인 Orca 앱 안의 것(`<Orca 앱>/Contents/Resources/bin/orca`)을 씁니다 — PATH 의 `orca` 는 다른 판 앱을 가리킬 수 있습니다. Orca 1.4.255 에서 실측한 플러그인 API 의 제한 때문입니다.
+A schedule belongs to one terminal you already have open, in any workspace. The terminal menu lists only terminals where Orca sees an agent running, labelled `agent · terminal title · workspace`. A plain shell is never offered and never sent to.
 
-| 플러그인 API | 실측 | 그래서 |
-|---|---|---|
-| `terminal.sendText` | 지금 화면에 열린 워크스페이스의 터미널에만 허용(`terminal is outside the active worktree`) | 열어 둔 터미널에 이어 보내지 않고 새로 띄움 |
-| `agent.launch` | 다른 워크스페이스에 띄운 에이전트에 프롬프트가 안 들어감(`agent_launch_terminal_not_running_agent`, 오류는 로그에만) | CLI 로 띄움 — 같은 워크스페이스에서 글이 들어가고 답까지 옴 |
-| `terminal.read` | 닫힌 터미널에도 오류를 내지 않음 | 닫혔는지는 CLI 의 터미널 목록으로 봄 |
+- Orca restarts give terminals new handles. The schedule finds its terminal again by its pane. A terminal that was closed shows as `(not open)`; the run waits, and you pick another terminal by editing the schedule.
+- **Start a new conversation** sends `/clear` first, then the prompt once the screen settles. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
 
-- 회차마다 탭이 하나씩 생깁니다. 결과를 읽을 수 있게 자동으로 닫지 않으니 다 본 탭은 직접 닫습니다.
-- 지난 회차가 아직 돌고 있으면 끝날 때까지 기다렸다 띄우고, 60분이 넘으면 그 회차는 「건너뜀」입니다.
+## Sending — idle check, then the Orca CLI
 
-## 끝 판정 — 에이전트 상태 알림 · 화면
+At the set time the run becomes due and is checked every 30 seconds. The prompt goes out only when all of these hold:
 
-- 먼저 보낸 글이 화면에 보이는지 봅니다(첫 줄 앞부분, 또는 `[Pasted text …]` 표시). 30초마다 확인하고, 그 사이 상태 알림이 오면 그 자리에서 화면을 한 번 더 읽습니다. 글이 보이기 전의 상태 알림은 시작 과정으로 보고 무시합니다 — Codex 는 뜨면서 working → done 을 한 번 냅니다.
-- 글이 보인 뒤 에이전트가 일을 시작했다가 멈추면(Orca 의 에이전트 상태 알림 working → done·waiting) 끝난 것으로 기록합니다. 결과는 에이전트가 알려 준 대로 「성공」·「실패」·「중단」, 알려 주지 않으면 「끝남」에 걸린 시간을 붙여 남깁니다(Orca 1.4.255 실기에서 Claude Code·Codex 는 결과를 알려 주지 않아 모두 「끝남」). 앱의 한 줄 요약·링크는 없습니다. waiting 은 질문 창에 답을 기다리는 것이라 「끝남(입력 대기)」로 남기고 알림을 띄웁니다.
-- 상태 알림을 놓치면 화면으로 봅니다. 화면이 3분 움직이지 않고 입력 칸이 비었으면(Claude Code `❯`, Codex `›`, Gemini `│ >`) 「끝남」입니다. 이때 보낸 글이 한 번도 보이지 않았으면 「실패 — 에이전트만 뜸」입니다.
-- 화면이 3분 멈췄는데 입력 칸이 보이지 않거나(권한·질문 창, Codex 업데이트 선택 창 등) 입력 칸에 글이 남아 있으면 알림을 한 번 띄우고 상태 막대를 주황으로 바꿉니다. 화면이 다시 움직이면 거둡니다.
-- 띄운 탭을 먼저 닫으면 「중단 — 결과를 모름」, 6시간 안에 안 끝나면 「결과 없음」입니다.
-
-## 화면 — 오른쪽 사이드바 패널 · 상태 막대
-
-- 오른쪽 사이드바의 달력 아이콘 「OrcaCron 예약」 패널에서 예약을 만들고 켜고 끕니다. 워크스페이스는 Orca 가 아는 전체 목록에서 고르고, 새 예약은 지금 보고 있는 워크스페이스가 기본값입니다.
-- 시각은 요일(매일·평일·휴일) + `09:00, 18:30` 처럼 쉼표로 나눈 시각, 또는 cron 식을 직접 씁니다.
-- 아래 상태 막대에 다음 예약 시각이 보이고, 확인할 예약이 있으면 주황으로 바뀝니다.
-
-## 권한 — 화면 읽기 · 상태 알림 · CLI
-
-| 권한 | 쓰는 곳 |
+| Check | Why |
 |---|---|
-| `terminal:read` | 띄운 터미널 화면으로 글 전달·끝·멈춤 판정 |
-| `agent:read` | 에이전트 상태 알림으로 끝 판정 |
-| `workspace:read` | 워크스페이스 목록, 지금 보고 있는 워크스페이스 |
-| `storage:own` | 예약 저장 |
-| `notifications:show` | 실패·멈춤 알림 |
+| The screen has been quiet for a minute | The agent or a person may still be working |
+| Orca does not report the agent as working | A working report older than 3 minutes is ignored, in case its end was missed |
+| The input box is visible and empty | A permission or question dialog is open, or a person is typing |
+| No other schedule sent to this terminal in the same check | Two prompts would land in one turn |
 
-에이전트 띄우기와 터미널 목록은 Orca CLI 로 하므로 권한 목록에 나오지 않습니다. `trusted-worker` 는 승인 문구대로 내 계정 권한으로 도는 Node 프로세스라 CLI 를 실행할 수 있습니다.
+A run that waits more than 60 minutes is skipped, with the reason it was waiting.
 
-## 개발 — orca plugin test · check
+Sending uses `orca terminal send --terminal <handle> --text <prompt> --enter --wait-submit 8`, run from the CLI inside the running Orca app (`<Orca app>/Contents/Resources/bin/orca`; the `orca` on PATH can belong to another copy). The plugin API is not used for this because of limits measured on Orca 1.4.255:
+
+| Plugin API | Measured | So |
+|---|---|---|
+| `terminal.sendText` | Allowed only for terminals in the workspace on screen (`terminal is outside the active worktree`) | Send with the CLI, which reaches every workspace |
+| `terminal.read` | Returns no error for a closed terminal | Tell open from closed by the CLI's terminal list |
+
+## End detection — agent status, then the screen
+
+- After sending, Orca's agent status events decide the end: working → done or waiting. An outcome the agent reports becomes Succeeded, Failed or Stopped; without one the run is Done, with the time it took. Waiting for input becomes Done (awaiting input), with a notification.
+- A done or waiting event while a permission or question dialog is on screen does not end the run. The card shows that a person must answer, and a notification goes out once.
+- If the events are missed, the screen decides: quiet for 3 minutes with an empty input box is Done. Quiet with no input box, or with text left in it, is flagged on the card and in the status bar until the screen moves again.
+- A terminal closed mid-run is Stopped; a run with no end after 6 hours is No result.
+
+## Schedule — days, times, calendar, cron
+
+| Field | Choices |
+|---|---|
+| Days | Every day · Weekdays · Weekends · Pick days (Monday first) · Dates on a calendar (up to 12 months ahead) · Cron |
+| Time | Set times (up to 24) or every N minutes (1–720), all day or between two times |
+| Cron | Five fields, or six with a year; several expressions joined by `;` |
+
+The form shows a summary of what it will do (for example `Weekdays 09:00–18:00, every 30 min`) and keeps Create disabled while a field is wrong. A schedule saved as cron that the form can express reopens in the form.
+
+## Screens — side panel laid out like the menubar app
+
+The calendar icon in the right sidebar opens the **Agent Scheduler** panel, laid out like the OrcaCron menubar app.
+
+| Part | What it shows and does |
+|---|---|
+| Top | What runs next, then counts: schedules, on, waiting, running, need attention, runs today. The language menu sits on the right |
+| One block per terminal | Agent icon (Claude Code ★, Codex `>_`, Gemini CLI ⚡), a green dot while the terminal is open, workspace and title. Pressing the workspace or the icon brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal**. A block folds to one line: `2 schedules · next tomorrow 09:00` |
+| Schedule in a block | Switch with the name; send now, edit, duplicate, delete (Undo for 8 seconds); next run and the rule; last result, a warning when it waits on a person, and the history |
+| Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`; the newest 20 finished ones are kept |
+| Terminals without schedules | Open agent terminals with no schedule, the first four, then `N more` |
+| Bottom | New schedule, Send, reload terminals |
+
+A closed terminal keeps its block, greyed out, with its last known agent; its schedules wait until it is open again or you pick another terminal in Edit.
+
+The status bar shows the next run, and turns orange with a count when a schedule needs attention (terminal not open, no agent, a dialog, text in the input box, the CLI missing).
+
+## Send once — one prompt now
+
+**Send** (or the arrow on a terminal line) opens the same form without days or times. The prompt goes out under the same idle check as a schedule, the name may stay empty (the first line of the prompt is used), and the result stays as a sent record under the terminal.
+
+## Permissions — screen, status, CLI
+
+| Permission | Used for |
+|---|---|
+| `terminal:read` | Reading the chosen terminal's screen for the idle check, dialogs and the end |
+| `agent:read` | Agent status events for the end |
+| `workspace:read` | Workspace names in the terminal menu |
+| `storage:own` | Schedules and the language |
+| `notifications:show` | Answers needed, failures |
+
+Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI.
+
+## Development — orca plugin test · check
 
 ```bash
-ORCA=orca   # PATH 의 Orca CLI — 실행 중인 Orca 앱과 버전이 같아야 plugin 명령이 있다(1.4.248 이상)
-$ORCA plugin test . --json      # 시험(시각 계산·화면 판정·실행기·worker·패널)
-$ORCA plugin check . --json     # 패널을 상황별로 한 번씩 그려 봄
-npx -p typescript tsc -p .      # 형 검사
-$ORCA plugin dev watch . --check --json   # Orca 에 올려 고칠 때마다 다시 읽음(권한이 바뀌면 다시 승인)
+ORCA="/Applications/Orca.app/Contents/Resources/bin/orca"   # the CLI of the Orca app you run
+$ORCA plugin test .                # tests: schedule maths, screen checks, engine, worker, panel
+$ORCA plugin check . --json        # draws the panel once per scenario
+npx -p typescript tsc -p . --noEmit
+$ORCA plugin dev watch . --check   # load into Orca, reload on each edit (a new permission needs a new approval)
 ```

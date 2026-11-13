@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { agentKind, permissionPrompt, promptState, promptVisible } from './screen'
+import { agentKind, permissionPrompt, promptState } from './screen'
 
 const rule = '──────────────────────────────'
 
@@ -70,13 +70,4 @@ test('에이전트 종류', () => {
   assert.equal(agentKind('Gemini'), 'gemini')
   assert.equal(agentKind(null), null)
   assert.equal(agentKind('opencode'), null)
-})
-
-test('보낸 글이 화면에 보이는지 — 첫 줄 앞부분, 접힌 붙여넣기 표시', () => {
-  const prompt = '작업 파일 /Users/x/tasks/sentry-24h.md 을 읽고\n그 절차대로 실행한다.'
-  assert.equal(promptVisible(['❯ 작업 파일 /Users/x/tasks/sentry-24h.md 을 읽고', '⏺ 읽는 중'], prompt), true)
-  assert.equal(promptVisible(['› 작업  파일 /Users/x/tasks/sen'], prompt), true, '공백 수가 달라도 같은 글')
-  assert.equal(promptVisible(['❯ [Pasted text #1 +12 lines]'], prompt), true)
-  assert.equal(promptVisible(['Claude Code', '❯ Try "fix lint errors"'], prompt), false)
-  assert.equal(promptVisible(['❯ 아무거나'], '   '), false, '빈 글은 보였다고 하지 않음')
 })

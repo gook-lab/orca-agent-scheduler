@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { aliveFrom, findCli, launchArgs, launchedFrom, parseCli } from './cli'
+import { findCli, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
 
 test('실행 중인 Orca 앱 안의 CLI 를 찾는다 — PATH 의 다른 판 대신', () => {
   const helper = '/Applications/Orca 2.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper'
@@ -17,33 +17,39 @@ test('CLI 출력 해석 — 성공, 오류 메시지, 읽을 수 없는 출력',
   assert.deepEqual(parseCli('', new Error('spawn ENOENT')), { ok: false, error: 'spawn ENOENT' })
 })
 
-test('agent launch 결과 — 글이 터미널에 넘어갔을 때만 성공', () => {
-  const ok = { ok: true as const, result: { outcome: { kind: 'terminal', handle: 'term_1' }, prompt: { delivery: 'submit', outcome: 'handed-to-terminal' } } }
-  assert.deepEqual(launchedFrom(ok), { terminalId: 'term_1' })
-  const noPrompt = { ok: true as const, result: { outcome: { kind: 'terminal', handle: 'term_1' }, prompt: { outcome: 'dropped' } } }
-  assert.match((launchedFrom(noPrompt) as { error: string }).error, /글이 들어가지 않음\(dropped\)/)
-  const chat = { ok: true as const, result: { outcome: { kind: 'chat' } } }
-  assert.match((launchedFrom(chat) as { error: string }).error, /터미널을 받지 못함\(chat\)/)
-  assert.deepEqual(launchedFrom({ ok: false, error: 'selector_not_found' }), { error: 'selector_not_found' })
-})
-
-test('터미널 목록 — handle 모음, 못 읽으면 모름(null)', () => {
-  assert.deepEqual([...(aliveFrom({ ok: true, result: { terminals: [{ handle: 'a' }, { handle: 'b' }] } }) ?? [])], ['a', 'b'])
-  assert.equal(aliveFrom({ ok: false, error: 'x' }), null)
-  assert.equal(aliveFrom({ ok: true, result: {} }), null)
-})
-
-test('띄우기 인자 — 터미널로, 고른 워크스페이스에, 글 그대로', () => {
-  assert.deepEqual(launchArgs('folder:abc', 'codex', "따옴표 ' 와 $HOME 도 그대로"), [
-    'agent',
-    'launch',
-    '--agent',
-    'codex',
-    '--surface',
-    'terminal',
-    '--worktree',
-    'folder:abc',
-    '--prompt',
-    "따옴표 ' 와 $HOME 도 그대로"
+test('terminal list → terminals that take input, with agent and pane', () => {
+  const r = {
+    ok: true as const,
+    result: {
+      terminals: [
+        { handle: 'term_a', title: 'Morning', agentIdentity: 'claude', worktreeId: 'repo::/x/docs', tabId: 't1', leafId: 'l1', lastOutputAt: 1000, writable: true },
+        { handle: 'term_b', title: 'Shell', worktreeId: 'folder:1', tabId: 't2', leafId: 'l2', writable: true },
+        { handle: 'term_c', title: 'Read only', agentIdentity: 'codex', worktreeId: 'folder:1', tabId: 't3', leafId: 'l3', writable: false }
+      ]
+    }
+  }
+  assert.deepEqual(terminalsFrom(r), [
+    { handle: 'term_a', title: 'Morning', agent: 'claude', workspaceId: 'repo::/x/docs', tabId: 't1', leafId: 'l1', lastOutputAt: 1000 },
+    { handle: 'term_b', title: 'Shell', agent: null, workspaceId: 'folder:1', tabId: 't2', leafId: 'l2', lastOutputAt: null }
   ])
+  assert.equal(terminalsFrom({ ok: false, error: 'x' }), null, 'unknown when the CLI fails')
+  assert.equal(terminalsFrom({ ok: true, result: {} }), null)
+})
+
+test('send — text as is, Enter, wait up to 8 s for the turn to start', () => {
+  assert.deepEqual(sendArgs('term_a', "quotes ' and $HOME stay"), [
+    'terminal',
+    'send',
+    '--terminal',
+    'term_a',
+    '--text',
+    "quotes ' and $HOME stay",
+    '--enter',
+    '--wait-submit',
+    '8'
+  ])
+  assert.deepEqual(sentFrom({ ok: true, result: { send: { prompt: { stages: ['input_accepted', 'submitted', 'turn_started'] } } } }), { started: true })
+  assert.deepEqual(sentFrom({ ok: true, result: { send: { prompt: { stages: ['input_accepted'] } } } }), { started: false })
+  assert.deepEqual(sentFrom({ ok: true, result: {} }), { started: false })
+  assert.deepEqual(sentFrom({ ok: false, error: 'terminal_handle_stale' }), { error: 'terminal_handle_stale' })
 })

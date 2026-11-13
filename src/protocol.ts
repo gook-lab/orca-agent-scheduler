@@ -1,32 +1,44 @@
-// 패널 ↔ worker 약속. src/panel.tsx 와 src/worker.ts 가 함께 읽는다.
-import type { Schedule } from './engine'
+// Panel ↔ worker contract. Read by both src/panel.tsx and src/worker.ts.
+import type { Schedule, TerminalRef } from './engine'
 
 export {}
 
-/** 패널이 저장을 부탁할 때 보내는 칸 — 실행 상태 칸은 worker 가 채운다. */
-export type ScheduleDraft = Pick<Schedule, 'name' | 'workspaceId' | 'workspace' | 'agent' | 'cron' | 'prompt' | 'enabled'> & {
+/** What the panel sends to save — the worker fills in the run state. */
+export type ScheduleDraft = Pick<Schedule, 'name' | 'terminal' | 'cron' | 'prompt' | 'enabled' | 'clearFirst'> & {
   id?: string
+  /** Send once now (no times) — cron is ignored and the name may be empty. */
+  once?: boolean
 }
 
-/** 고를 수 있는 워크스페이스(workspace.list 는 worker 만 부를 수 있다). */
-export type WorkspaceOption = { id: string; name: string; branch: string | null; path: string; kind: 'worktree' | 'folder' }
+/** An agent terminal the panel can offer (only the worker can run the Orca CLI). */
+export type TerminalOption = TerminalRef
 
 export type RunnerStatus = { lastTickAt: number | null; log: string[] }
 
+/** Plugin storage key of the language ('en' | 'ko'), shared by the panel atom and the worker. */
+export const LANG_KEY = 'lang'
+
 declare module 'orca' {
   interface PluginRequests {
-    /** 예약 전부(worker 를 깨우는 용도도 겸한다). */
+    /** Every schedule (also wakes the worker). */
     'schedules.list': { output: Schedule[] }
-    /** 새로 만들거나 고친다. 칸이 틀리면 invalid_params. */
+    /** Create or edit. Bad fields → invalid_params. */
     'schedules.save': { input: ScheduleDraft; output: Schedule }
     'schedules.delete': { input: { id: string }; output: { ok: true } }
     'schedules.toggle': { input: { id: string; enabled: boolean }; output: Schedule }
-    /** 시각과 상관없이 지금 띄운다(지난 회차가 돌고 있으면 끝난 뒤). */
+    /** Send now regardless of the time (once the terminal is idle). */
     'schedules.runNow': { input: { id: string }; output: Schedule }
-    'workspaces.list': { output: WorkspaceOption[] }
+    /** Put a just-deleted schedule back (Undo). */
+    'schedules.restore': { input: { schedule: Schedule }; output: Schedule }
+    /** Agent terminals open in Orca, across workspaces. */
+    'terminals.list': { output: TerminalOption[] }
+    /** Bring Orca to that terminal's tab (`orca terminal switch`). */
+    'terminals.focus': { input: { handle: string }; output: { ok: boolean } }
     'runner.status': { output: RunnerStatus }
   }
   interface PluginPanelEvents {
     'schedules.changed': { schedules: Schedule[] }
+    /** The agent terminals, pushed when the list changes (checked every 30 s). */
+    'terminals.changed': { terminals: TerminalOption[] }
   }
 }

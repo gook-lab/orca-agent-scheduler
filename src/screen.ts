@@ -104,13 +104,3 @@ export function permissionPrompt(lines: string[]): boolean {
   })
   return asks && yes
 }
-
-/** 보낸 글이 화면에 보이는가 — 글이 실제로 들어갔다는 증거. 첫 줄 앞 16자로 찾고, 긴 글은 에이전트가
- *  「[Pasted text #1 +5 lines]」처럼 접어 보이므로 그 표시도 들어간 것으로 본다. */
-export function promptVisible(lines: string[], prompt: string): boolean {
-  const squash = (s: string): string => s.replace(/\s+/g, ' ').trim()
-  const first = prompt.split('\n').map(squash).find(Boolean) ?? ''
-  if (!first) return false
-  const head = [...first].slice(0, 16).join('')
-  return lines.some((l) => squash(l).includes(head) || /\[Pasted/i.test(l))
-}

@@ -1211,20 +1211,24 @@ function Form() {
   // Send once is about the prompt: terminal, prompt, Send; the name (first line if empty) waits under
   // More options. It has no /clear — a one-off usually carries on the conversation in that terminal.
   // A schedule keeps name, terminal, /clear, then when.
+  // Sections apart, each one's parts close: who (name; terminal and /clear), when, what, then the buttons
+  // with the reason they are off. The space under the title line matches Settings.
   return (
-    <Stack gap="sm">
+    <Stack gap="md">
       <SubHeader title={d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule} onClose={() => leaveForm('top')} />
       {read(confirmLeave) === 'top' ? confirm : null}
       {d.once ? null : nameField}
-      <TerminalPicker
-        selected={d.handle}
-        missing={missing}
-        onPick={(handle) => {
-          patch({ handle })
-          set(pickerOpen, false)
-        }}
-      />
-      {d.once ? null : clearField}
+      <Stack gap="xs">
+        <TerminalPicker
+          selected={d.handle}
+          missing={missing}
+          onPick={(handle) => {
+            patch({ handle })
+            set(pickerOpen, false)
+          }}
+        />
+        {d.once ? null : clearField}
+      </Stack>
       {c === null ? null : (
         <Stack gap="sm">
           <Select label={u.days} value={d.day} options={dayModes.map((m) => ({ value: m, label: u.dayChoice[m] }))} onChange={changeDay} />
@@ -1240,35 +1244,39 @@ function Form() {
           </Text>
         </Stack>
       )}
-      <Textarea label={u.prompt} rows={4} value={d.prompt} placeholder={u.promptPlaceholder} onChange={(prompt) => patch({ prompt })} />
-      {d.once ? (
-        <Text muted size="xs">
-          {u.sendHint}
-        </Text>
-      ) : null}
+      <Stack gap="xs">
+        <Textarea label={u.prompt} rows={4} value={d.prompt} placeholder={u.promptPlaceholder} onChange={(prompt) => patch({ prompt })} />
+        {d.once ? (
+          <Text muted size="xs">
+            {u.sendHint}
+          </Text>
+        ) : null}
+      </Stack>
       {d.once ? (
         <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim()}>
           {nameField}
         </Collapsible>
       ) : null}
-      {reason ? (
-        <Text size="xs" muted>
-          {reason}
-        </Text>
-      ) : null}
-      {read(formError) ? (
-        <Callout tone="danger" title={u.problem}>
-          {read(formError)}
-        </Callout>
-      ) : null}
-      <Row gap="xs">
-        <Button tone="accent" variant="solid" icon={d.once ? 'next' : undefined} disabled={blocked} onPress={() => void save()}>
-          {d.once ? u.send : d.id ? u.save : u.create}
-        </Button>
-        <Button variant="ghost" onPress={() => leaveForm('bottom')}>
-          {u.cancel}
-        </Button>
-      </Row>
+      <Stack gap="xs">
+        {reason ? (
+          <Text size="xs" muted>
+            {reason}
+          </Text>
+        ) : null}
+        {read(formError) ? (
+          <Callout tone="danger" title={u.problem}>
+            {read(formError)}
+          </Callout>
+        ) : null}
+        <Row gap="xs">
+          <Button tone="accent" variant="solid" icon={d.once ? 'next' : undefined} disabled={blocked} onPress={() => void save()}>
+            {d.once ? u.send : d.id ? u.save : u.create}
+          </Button>
+          <Button variant="ghost" onPress={() => leaveForm('bottom')}>
+            {u.cancel}
+          </Button>
+        </Row>
+      </Stack>
       {read(confirmLeave) === 'bottom' ? confirm : null}
     </Stack>
   )

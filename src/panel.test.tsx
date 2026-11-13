@@ -737,6 +737,8 @@ test('Settings and the form open under a line; Claude Code is not a star in the 
   assert.equal(view.find({ type: 'Separator' }), null, 'the list has the tabs under its title')
   await view.press({ type: 'IconButton', label: 'New schedule' })
   assert.ok(view.find({ type: 'Separator' }))
+  const rootGap = () => (view.tree() as { props?: { gap?: string } } | null)?.props?.gap
+  assert.equal(rootGap(), 'md', 'sections apart, as in Settings')
   assert.deepEqual(
     view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.icon]),
     [
@@ -748,5 +750,6 @@ test('Settings and the form open under a line; Claude Code is not a star in the 
   await view.press({ type: 'IconButton', label: 'Close' })
   await view.press({ label: 'Settings' })
   assert.ok(view.find({ type: 'Separator' }))
+  assert.equal(rootGap(), 'md')
   await view.unmount()
 })

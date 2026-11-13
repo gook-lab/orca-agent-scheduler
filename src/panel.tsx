@@ -22,7 +22,9 @@ import {
   Row,
   Select,
   set,
+  Spinner,
   Stack,
+  storage,
   Switch,
   Tab,
   Tabs,
@@ -71,6 +73,12 @@ const tab = atom<View>('schedules')
 /** The search box — filters both tabs. */
 const query = atom('')
 const settingsOpen = atom(false)
+/** Favorite terminals by pane id, first in both tabs. Written to storage by hand — a persisted atom
+ *  changed by a press fired its handler three times and ended on the old value. */
+const favorites = atom<string[]>([])
+const FAVORITES_KEY = 'favorites'
+/** The terminal list is being read — the reload button turns into a spinner. */
+const refreshing = atom(false)
 
 /** The plugin's name — the same in every language. */
 const TITLE = 'Agent Scheduler'
@@ -123,6 +131,10 @@ const draft = atom<Draft>(emptyDraft())
 const formOpen = atom(false)
 /** The form's terminal list is open — it starts folded to one line when the form came with a terminal. */
 const pickerOpen = atom(false)
+/** The draft as the form opened, to tell whether leaving would throw something away. */
+const openedDraft = atom('')
+/** Back or Cancel pressed with changes — where to ask: by Back at the top or by Cancel at the bottom. */
+const confirmLeave = atom<'top' | 'bottom' | null>(null)
 const formError = atom<string | null>(null)
 const saving = atom(false)
 
@@ -134,11 +146,36 @@ const thisMonth = (): { y: number; m: number } => {
 const month = atom(thisMonth())
 
 async function refreshTerminals(): Promise<void> {
+  set(refreshing, true)
   try {
     set(terminals, await plugin.request('terminals.list'))
   } catch {
     set(terminals, [])
+  } finally {
+    set(refreshing, false)
   }
+}
+
+/** A pane keeps its id across Orca restarts; the handle does not. */
+const paneOf = (t: Pick<TerminalRef, 'leafId' | 'handle'>): string => t.leafId || t.handle
+const isFavorite = (t: Pick<TerminalRef, 'leafId' | 'handle'>): boolean => read(favorites).includes(paneOf(t))
+
+function toggleFavorite(t: TerminalRef): void {
+  const key = paneOf(t)
+  update(favorites, (keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]))
+  void storage.set(FAVORITES_KEY, read(favorites)).catch(() => undefined)
+}
+
+/** The reload button, or a spinner while the list is being read. */
+function ReloadButton() {
+  const u = words(read(lang)).ui
+  return read(refreshing) ? (
+    <Box width={24} align="center" shrink={false}>
+      <Spinner label={u.refreshTerminals} labelHidden />
+    </Box>
+  ) : (
+    <IconButton icon="refresh" size="sm" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+  )
 }
 
 function openForm(d: Draft): void {
@@ -150,6 +187,8 @@ function openForm(d: Draft): void {
   } else set(month, thisMonth())
   set(formError, null)
   set(pickerOpen, !d.handle)
+  set(openedDraft, JSON.stringify(d))
+  set(confirmLeave, null)
   set(formOpen, true)
   void refreshTerminals()
 }
@@ -160,13 +199,24 @@ const openSend = (handle = ''): void => openForm({ ...emptyDraft(), once: true, 
 function closeForm(): void {
   set(draft, emptyDraft())
   set(formError, null)
+  set(confirmLeave, null)
   set(formOpen, false)
+}
+
+/** Back and Cancel — leave at once when nothing changed, otherwise ask next to the button pressed. */
+function leaveForm(where: 'top' | 'bottom'): void {
+  if (JSON.stringify(read(draft)) === read(openedDraft)) closeForm()
+  else set(confirmLeave, where)
 }
 
 export function setup(ctx: PanelContext): void {
   set(lang, langFor(read(langPref)))
   ctx.subscriptions.push(plugin.on('schedules.changed', (p) => set(schedules, p.schedules)))
   ctx.subscriptions.push(plugin.on('terminals.changed', (p) => set(terminals, p.terminals)))
+  void storage
+    .get(FAVORITES_KEY)
+    .then((v) => (Array.isArray(v) ? set(favorites, v.filter((k): k is string => typeof k === 'string')) : undefined))
+    .catch(() => undefined)
   // Wakes the worker and gets the current list.
   void plugin.request('schedules.list').then((list) => set(schedules, list)).catch(() => undefined)
   void refreshTerminals()
@@ -307,14 +357,16 @@ async function save(): Promise<void> {
   }
 }
 
-/** After saving, show where it went: the Schedules tab with that terminal's block open, and a search
- *  that would hide it cleared. Saved from the Terminals tab, the result was otherwise out of sight. */
-function showSaved(s: Schedule): void {
+/** The Schedules tab with that terminal's block open, and a search that would hide it cleared. */
+function reveal(t: TerminalRef, names: string[] = []): void {
   set(tab, 'schedules')
-  update(collapsed, (keys) => keys.filter((k) => k !== s.terminal.leafId && k !== s.terminal.handle))
+  update(collapsed, (keys) => keys.filter((k) => k !== t.leafId && k !== t.handle))
   const q = read(query).trim().toLowerCase()
-  if (!matches(q, [s.name, ...terminalTexts(s.terminal)])) set(query, '')
+  if (!matches(q, [...names, ...terminalTexts(t)])) set(query, '')
 }
+
+/** After saving, show where it went — saved from the Terminals tab, it was otherwise out of sight. */
+const showSaved = (s: Schedule): void => reveal(s.terminal, [s.name])
 
 const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'warning' | 'neutral' | 'accent' =>
   status === 'success' || status === 'done' || status === 'doneWaiting'
@@ -350,7 +402,7 @@ function Header() {
       <Toolbar label={u.actions} gap="none">
         <IconButton icon="add" size="sm" variant="ghost" label={u.newSchedule} onPress={() => openNew()} />
         <IconButton icon="next" size="sm" variant="ghost" label={u.sendOnce} onPress={() => openSend()} />
-        <IconButton icon="refresh" size="sm" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+        <ReloadButton />
         <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={() => set(settingsOpen, true)} />
       </Toolbar>
     </Box>
@@ -397,39 +449,86 @@ function Stats() {
 // ───────────────────────── Terminal line — agent, live dot, name ─────────────────────────
 
 const agentIcon: Record<AgentKind, IconName> = { claude: 'star', codex: 'terminal', gemini: 'zap' }
+/** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles; ★ is the favorite button. */
+const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 
-/** One terminal: agent icon, a green dot while it is open, workspace and title (press to show it in
- *  Orca), then send once and new schedule. A closed terminal stays, faded, with its last known agent. */
-function TerminalLine({ term: t, live, fold }: { term: TerminalRef; live: TerminalOption | null; fold?: { open: boolean; toggle: () => void } }) {
+/** One terminal: agent mark, a green dot while it is open, workspace and title. In a block, pressing the
+ *  name folds it, as rows do in Orca's own trees; ↗ brings Orca to the terminal. On the Terminals tab a
+ *  terminal with schedules shows how many, and pressing that goes to them. Then send once and new
+ *  schedule. A closed terminal stays, faded, with its last known agent. */
+function TerminalLine({
+  term: t,
+  live,
+  fold,
+  count
+}: {
+  term: TerminalRef
+  live: TerminalOption | null
+  fold?: { open: boolean; toggle: () => void }
+  count?: number
+}) {
   const u = words(read(lang)).ui
   const kind = agentKind(live?.agent ?? t.agent)
-  const focus = () => (live ? void focusTerminal(live.handle) : undefined)
+  const name = t.workspace || t.title
+  const fav = isFavorite(live ?? t)
+  // Marks, dot and name keep their width (squeezed, text broke a letter per line); the title takes what is
+  // left and ends in …; the name stops at half the line.
   return (
     <Box direction="row" align="center" gap="xs">
       {fold ? (
         <IconButton icon={fold.open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={fold.open ? u.collapse : u.expand} onPress={fold.toggle} />
       ) : null}
       <IconButton
-        icon={kind ? agentIcon[kind] : 'agent'}
+        icon="star"
         size="xs"
         variant="ghost"
-        tone={live ? 'accent' : 'neutral'}
-        label={`${kind ? agentName[kind] : t.agent} — ${u.showInOrca}`}
-        disabled={!live}
-        onPress={focus}
+        tone={fav ? 'accent' : 'neutral'}
+        label={fav ? u.unfavorite : u.favorite}
+        onPress={() => toggleFavorite(live ?? t)}
       />
+      <Box shrink={false}>
+        <Text size="xs" weight="semibold" tone={live ? 'accent' : 'neutral'} muted={!live}>
+          {kind ? agentGlyph[kind] : '•'}
+        </Text>
+      </Box>
       {/* A Box background is only a tint — a glyph gives a solid dot. */}
-      <Text size="xs" tone={live ? 'success' : 'neutral'} muted={!live}>
-        ●
-      </Text>
-      <Box direction="row" align="center" gap="xs" grow shrink minWidth={0}>
-        <Button size="xs" variant="ghost" tooltip={u.showInOrca} disabled={!live} onPress={focus}>
-          {t.workspace || t.title}
-        </Button>
+      <Box shrink={false}>
+        <Text size="xs" tone={live ? 'success' : 'neutral'} muted={!live}>
+          ●
+        </Text>
+      </Box>
+      <Box shrink={false} maxWidth="50%">
+        {fold ? (
+          <Button size="xs" variant="ghost" tooltip={fold.open ? u.collapse : u.expand} onPress={fold.toggle}>
+            {name}
+          </Button>
+        ) : (
+          <Text size="xs" weight="medium" truncate>
+            {name}
+          </Text>
+        )}
+      </Box>
+      <Box grow shrink minWidth={0}>
         <Text size="xs" muted truncate>
           {t.workspace ? t.title : ''}
         </Text>
       </Box>
+      {count ? (
+        <Box shrink={false}>
+          <Button size="xs" variant="ghost" onPress={() => reveal(live ?? t)}>
+            {u.tabSchedules(count)}
+          </Button>
+        </Box>
+      ) : null}
+      <IconButton
+        icon="open-external"
+        size="xs"
+        variant="ghost"
+        label={`${kind ? agentName[kind] : t.agent} — ${u.showInOrca}`}
+        tooltip={u.showInOrca}
+        disabled={!live}
+        onPress={() => (live ? void focusTerminal(live.handle) : undefined)}
+      />
       <IconButton
         icon="next"
         size="xs"
@@ -591,17 +690,33 @@ function filterGroup(g: Group, q: string): Group | null {
   return recurring.length + once.length > 0 ? { ...g, recurring, once } : null
 }
 
+/** The block a schedule belongs to. */
+const holds = (g: Group, s: Schedule): boolean => sameTerminal(g.ref, s.terminal) || (!!g.live && sameTerminal(g.live, s.terminal))
+
 function TerminalBlock({ g }: { g: Group }) {
   const l = read(lang)
   const u = words(l).ui
   const open = !read(collapsed).includes(g.key)
   const toggle = () => update(collapsed, (keys) => (open ? [...keys, g.key] : keys.filter((k) => k !== g.key)))
   const next = g.recurring.filter((s) => s.enabled && s.nextRunAt !== null).sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
+  const gone = read(undone)
   return (
     <Stack gap="xs">
       <Box background="muted" radius="md" paddingX="xs">
         <TerminalLine term={g.ref} live={g.live} fold={{ open, toggle }} />
       </Box>
+      {gone && holds(g, gone) ? (
+        <Box direction="row" align="center" gap="xs" border radius="md" paddingX="sm" paddingY="xs">
+          <Box grow shrink minWidth={0}>
+            <Text size="xs" muted truncate>
+              {u.deleted(gone.name)}
+            </Text>
+          </Box>
+          <Button size="xs" variant="outline" onPress={restore}>
+            {u.undo}
+          </Button>
+        </Box>
+      ) : null}
       {open ? (
         <Stack gap="xs">
           {g.recurring.map((s) => (
@@ -623,9 +738,26 @@ function SchedulesView() {
   const l = read(lang)
   const u = words(l).ui
   const list = read(schedules)
-  if (list.length === 0) return <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription} />
+  const gone = read(undone)
+  if (list.length === 0 && !gone)
+    return (
+      <EmptyState icon="calendar" title={u.emptyTitle} description={u.emptyDescription}>
+        <Text size="xs" muted>
+          {u.footer}
+        </Text>
+      </EmptyState>
+    )
   const q = read(query).trim().toLowerCase()
-  const groups = groupsOf(list, read(terminals)).flatMap((g) => filterGroup(g, q) ?? [])
+  // Undo shows where the schedule was, so its block stays while Undo is offered — even if it is now empty.
+  const all = groupsOf(list, read(terminals))
+  if (gone && !all.some((g) => holds(g, gone))) {
+    const live = read(terminals)?.find((t) => sameTerminal(t, gone.terminal)) ?? null
+    all.push({ key: gone.terminal.leafId || gone.terminal.handle, ref: live ?? gone.terminal, live, recurring: [], once: [] })
+  }
+  const favs = read(favorites)
+  const rank = (g: Group) => (favs.includes(paneOf(g.live ?? g.ref)) ? 0 : 1)
+  all.sort((a, b) => rank(a) - rank(b))
+  const groups = all.flatMap((g) => filterGroup(g, q) ?? (gone && holds(g, gone) ? [{ ...g, recurring: [], once: [] }] : []))
   const next = nextOf(list)
   return (
     <Stack gap="md">
@@ -654,17 +786,21 @@ function TerminalsView() {
   if (open === null) return null
   if (open.length === 0) return <EmptyState icon="terminal" title={u.noTerminals} />
   const q = read(query).trim().toLowerCase()
-  const shown = open.filter((t) => matches(q, terminalTexts(t)))
+  const favs = read(favorites)
+  const rank = (t: TerminalOption) => (favs.includes(paneOf(t)) ? 0 : 1)
+  const shown = open.filter((t) => matches(q, terminalTexts(t))).sort((a, b) => rank(a) - rank(b))
   if (shown.length === 0)
     return (
       <Text size="xs" muted>
         {u.noMatch(read(query).trim())}
       </Text>
     )
+  const list = read(schedules)
+  const countOf = (t: TerminalOption) => list.filter((s) => !s.once && sameTerminal(t, s.terminal)).length
   return (
     <Stack gap="xs">
       {shown.map((t) => (
-        <TerminalLine term={t} live={t} />
+        <TerminalLine term={t} live={t} count={countOf(t)} />
       ))}
     </Stack>
   )
@@ -870,7 +1006,7 @@ function TerminalPicker({ selected, missing, onPick }: { selected: string; missi
           </Text>
         </Box>
         {expanded ? (
-          <IconButton icon="refresh" size="xs" variant="ghost" label={u.refreshTerminals} onPress={() => void refreshTerminals()} />
+          <ReloadButton />
         ) : (
           <Button size="xs" variant="ghost" onPress={() => set(pickerOpen, true)}>
             {u.change}
@@ -930,20 +1066,36 @@ function Form() {
             ? e.prompt
             : null
   const blocked = read(saving) || reason !== null
+  const nameField = (
+    <Input label={u.name} value={d.name} placeholder={d.once ? u.namePlaceholderOnce : u.namePlaceholder} onChange={(name) => patch({ name })} />
+  )
+  const clearField = (
+    <Checkbox label={u.clearFirst} description={u.clearFirstHint} checked={d.clearFirst} onChange={(clearFirst) => patch({ clearFirst })} />
+  )
+  const confirm = (
+    <Callout tone="warning" title={u.discardTitle}>
+      <Row gap="xs">
+        <Button size="xs" variant="outline" tone="danger" onPress={closeForm}>
+          {u.discard}
+        </Button>
+        <Button size="xs" variant="ghost" onPress={() => set(confirmLeave, null)}>
+          {u.keepEditing}
+        </Button>
+      </Row>
+    </Callout>
+  )
+  // Send once is about the prompt: terminal, prompt, Send. The name (first line if empty) and /clear
+  // wait under More options. A schedule keeps name, terminal, /clear, then when.
   return (
     <Stack gap="sm">
       <Box direction="row" align="center" gap="xs">
-        <Button size="sm" variant="ghost" onPress={closeForm}>
+        <Button size="sm" variant="ghost" onPress={() => leaveForm('top')}>
           {`‹ ${u.back}`}
         </Button>
         <Text weight="semibold">{d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule}</Text>
       </Box>
-      <Input
-        label={u.name}
-        value={d.name}
-        placeholder={d.once ? u.namePlaceholderOnce : u.namePlaceholder}
-        onChange={(name) => patch({ name })}
-      />
+      {read(confirmLeave) === 'top' ? confirm : null}
+      {d.once ? null : nameField}
       <TerminalPicker
         selected={d.handle}
         missing={missing}
@@ -952,7 +1104,7 @@ function Form() {
           set(pickerOpen, false)
         }}
       />
-      <Checkbox label={u.clearFirst} description={u.clearFirstHint} checked={d.clearFirst} onChange={(clearFirst) => patch({ clearFirst })} />
+      {d.once ? null : clearField}
       {c === null ? null : (
         <Stack gap="sm">
           <Select label={u.days} value={d.day} options={dayModes.map((m) => ({ value: m, label: u.dayChoice[m] }))} onChange={changeDay} />
@@ -974,6 +1126,14 @@ function Form() {
           {u.sendHint}
         </Text>
       ) : null}
+      {d.once ? (
+        <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim() || d.clearFirst}>
+          <Stack gap="sm">
+            {nameField}
+            {clearField}
+          </Stack>
+        </Collapsible>
+      ) : null}
       {reason ? (
         <Text size="xs" muted>
           {reason}
@@ -988,10 +1148,11 @@ function Form() {
         <Button tone="accent" variant="solid" icon={d.once ? 'next' : undefined} disabled={blocked} onPress={() => void save()}>
           {d.once ? u.send : d.id ? u.save : u.create}
         </Button>
-        <Button variant="ghost" onPress={closeForm}>
+        <Button variant="ghost" onPress={() => leaveForm('bottom')}>
           {u.cancel}
         </Button>
       </Row>
+      {read(confirmLeave) === 'bottom' ? confirm : null}
     </Stack>
   )
 }
@@ -1040,21 +1201,10 @@ function Settings() {
 export default function Panel() {
   if (read(formOpen)) return <Form />
   if (read(settingsOpen)) return <Settings />
-  const u = words(read(lang)).ui
-  const gone = read(undone)
   return (
     <Stack gap="sm">
       <Header />
       <Nav />
-      {gone ? (
-        <Callout tone="neutral" icon="info" title={u.deleted(gone.name)}>
-          <Row>
-            <Button size="xs" variant="outline" onPress={restore}>
-              {u.undo}
-            </Button>
-          </Row>
-        </Callout>
-      ) : null}
       {read(tab) === 'terminals' ? <TerminalsView /> : <SchedulesView />}
     </Stack>
   )

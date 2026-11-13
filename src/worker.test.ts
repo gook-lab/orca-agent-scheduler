@@ -317,3 +317,20 @@ test('the terminal list is pushed to the panel after a check, and only when it c
   await worker.deactivate()
   main.cli.run = null
 })
+
+test('a terminal whose agent blinks out for a moment stays in the panel list', async () => {
+  let blink = false
+  main.cli.run = async (args): Promise<CliResult> => {
+    if (args[1] !== 'list') return { ok: false, error: 'unused' }
+    return {
+      ok: true,
+      result: { terminals: [{ handle: 'h1', title: 'Morning', worktreeId: 'w1', tabId: 't1', leafId: 'l1', writable: true, ...(blink ? {} : { agentIdentity: 'claude' }) }] }
+    }
+  }
+  const worker = await mountWorker(main, { host: host() })
+  const handles = async () => ((await worker.request('terminals.list')) as TerminalOption[]).map((t) => [t.handle, t.agent])
+  assert.deepEqual(await handles(), [['h1', 'claude']])
+  blink = true
+  assert.deepEqual(await handles(), [['h1', 'claude']], 'Orca lost the agent for a second — the form still finds the terminal')
+  await worker.deactivate()
+})

@@ -64,6 +64,30 @@ export function terminalsFrom(r: CliResult): LiveTerminal[] | null {
     }))
 }
 
+/**
+ * Orca drops a working terminal's agent for a second or two now and then (11-13: one busy Claude
+ * terminal, 7 times in 30 one-second reads, the handle unchanged). A terminal whose agent was seen within
+ * `holdMs` keeps it — otherwise it falls out of the panel's list and a pending run turns orange for
+ * nothing. Nothing goes out on this alone: the screen still has to show that agent's input box.
+ * `seen` remembers the last agent by pane.
+ */
+export function holdAgents(
+  list: LiveTerminal[],
+  seen: Map<string, { agent: string; at: number }>,
+  now: number,
+  holdMs: number
+): LiveTerminal[] {
+  return list.map((t) => {
+    const key = t.leafId || t.handle
+    if (t.agent) {
+      seen.set(key, { agent: t.agent, at: now })
+      return t
+    }
+    const last = seen.get(key)
+    return last && now - last.at <= holdMs ? { ...t, agent: last.agent } : t
+  })
+}
+
 /** Type the text and press Enter, then watch up to 8 s for the agent to start a turn (never resends). */
 export const sendArgs = (handle: string, text: string): string[] => ['terminal', 'send', '--terminal', handle, '--text', text, '--enter', '--wait-submit', '8']
 

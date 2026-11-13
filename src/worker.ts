@@ -2,7 +2,7 @@
 // Schedules live in storage 'schedules' and only this file edits them; the panel asks by request and hears by post.
 // The terminal list and sending go through the Orca CLI (why: src/cli.ts).
 import type { OrcaWorkerApi } from 'orca/worker'
-import { type CliRunner, cliRunner, findCli, sendArgs, sentFrom, terminalsFrom } from './cli'
+import { type CliRunner, cliRunner, findCli, holdAgents, sendArgs, sentFrom, terminalsFrom } from './cli'
 import {
   blankSchedule,
   blankTerminal,
@@ -89,6 +89,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     return next
   }
 
+  const seenAgents = new Map<string, { agent: string; at: number }>()
   const io: Io = {
     async read(handle) {
       try {
@@ -108,7 +109,10 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       return r
     },
     async terminals() {
-      return run ? terminalsFrom(await run(['terminal', 'list'])) : null
+      if (!run) return null
+      const list = terminalsFrom(await run(['terminal', 'list']))
+      // Read at least once a check, so two checks cover the last time the agent was seen.
+      return list && holdAgents(list, seenAgents, Date.now(), 2 * TICK_MS)
     }
   }
 

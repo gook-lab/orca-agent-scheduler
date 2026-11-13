@@ -731,3 +731,22 @@ test('entering the Terminals tab reads the list afresh; the Schedules tab does n
   assert.equal(reads, 3)
   await view.unmount()
 })
+
+test('Settings and the form open under a line; Claude Code is not a star in the picker', async () => {
+  const view = await mount(panel, { host: host() })
+  assert.equal(view.find({ type: 'Separator' }), null, 'the list has the tabs under its title')
+  await view.press({ type: 'IconButton', label: 'New schedule' })
+  assert.ok(view.find({ type: 'Separator' }))
+  assert.deepEqual(
+    view.findAll({ type: 'ListItem' }).map((e) => [e.label, e.props.icon]),
+    [
+      ['Morning', 'bot'],
+      ['Review', 'terminal']
+    ],
+    'the ☆ beside a terminal means favorite'
+  )
+  await view.press({ type: 'IconButton', label: 'Close' })
+  await view.press({ label: 'Settings' })
+  assert.ok(view.find({ type: 'Separator' }))
+  await view.unmount()
+})

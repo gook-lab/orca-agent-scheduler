@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
-import { findCli, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
+import { findCli, holdAgents, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
+import type { LiveTerminal } from './engine'
 
 test('실행 중인 Orca 앱 안의 CLI 를 찾는다 — PATH 의 다른 판 대신', () => {
   const helper = '/Applications/Orca 2.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper'
@@ -52,4 +53,15 @@ test('send — text as is, Enter, wait up to 8 s for the turn to start', () => {
   assert.deepEqual(sentFrom({ ok: true, result: { send: { prompt: { stages: ['input_accepted'] } } } }), { started: false })
   assert.deepEqual(sentFrom({ ok: true, result: {} }), { started: false })
   assert.deepEqual(sentFrom({ ok: false, error: 'terminal_handle_stale' }), { error: 'terminal_handle_stale' })
+})
+
+test('a blink in the agent is held for a while by pane — not for a terminal never seen with one', () => {
+  const t = (agent: string | null, handle = 'h1', leafId = 'l1'): LiveTerminal => ({ handle, title: 'x', agent, workspaceId: 'w', tabId: 't', leafId, lastOutputAt: null })
+  const seen = new Map<string, { agent: string; at: number }>()
+  const agents = (list: LiveTerminal[]) => list.map((x) => x.agent)
+  assert.deepEqual(agents(holdAgents([t('claude'), t(null, 'h9', 'l9')], seen, 0, 60_000)), ['claude', null], 'a plain shell stays a shell')
+  assert.deepEqual(agents(holdAgents([t(null)], seen, 2_000, 60_000)), ['claude'], 'gone for a second — still Claude Code')
+  assert.deepEqual(agents(holdAgents([t(null, 'h2')], seen, 50_000, 60_000)), ['claude'], 'by pane, though the handle changed')
+  assert.deepEqual(agents(holdAgents([t(null)], seen, 61_000, 60_000)), [null], 'gone longer than that — the agent has quit')
+  assert.deepEqual(agents(holdAgents([t('codex')], seen, 62_000, 60_000)), ['codex'], 'what Orca says now wins')
 })

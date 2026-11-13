@@ -20,6 +20,7 @@ import {
   RadioGroup,
   read,
   Row,
+  Separator,
   Select,
   set,
   Progress,
@@ -480,16 +481,20 @@ function Header() {
 function SubHeader({ title, onClose }: { title: string; onClose: () => void }) {
   const u = words(read(lang)).ui
   return (
-    <Box direction="row" align="center" gap="xs">
-      <Box grow shrink minWidth={0}>
-        <Text size="sm" weight="semibold" truncate>
-          {title}
-        </Text>
+    <Stack gap="xs">
+      <Box direction="row" align="center" gap="xs">
+        <Box grow shrink minWidth={0}>
+          <Text size="sm" weight="semibold" truncate>
+            {title}
+          </Text>
+        </Box>
+        <Toolbar label={title} gap="none">
+          <IconButton icon="close" size="sm" variant="ghost" label={u.close} onPress={onClose} />
+        </Toolbar>
       </Box>
-      <Toolbar label={title} gap="none">
-        <IconButton icon="close" size="sm" variant="ghost" label={u.close} onPress={onClose} />
-      </Toolbar>
-    </Box>
+      {/* The line under it says this is a screen of its own, over the list. */}
+      <Separator />
+    </Stack>
   )
 }
 
@@ -532,7 +537,8 @@ function Stats() {
 
 // ───────────────────────── Terminal line — agent, live dot, name ─────────────────────────
 
-const agentIcon: Record<AgentKind, IconName> = { claude: 'star', codex: 'terminal', gemini: 'zap' }
+/** Picker icons — not 'star' for Claude Code: the ☆ beside a terminal is the favorite button. */
+const agentIcon: Record<AgentKind, IconName> = { claude: 'bot', codex: 'terminal', gemini: 'zap' }
 /** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles; ★ is the favorite button. */
 const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 

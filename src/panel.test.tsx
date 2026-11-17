@@ -25,6 +25,7 @@ function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
     requests: {
       'schedules.list': () => [],
       'terminals.list': () => list,
+      'runner.status': () => ({ lastTickAt: null, log: [], cli: true }),
       'schedules.save': (d) => {
         calls.saved?.push(d as ScheduleDraft)
         return { ...blankSchedule('s1'), ...(d as object) } as never
@@ -709,6 +710,23 @@ test('a new send opens its terminal’s sent group, which stays open when it end
   assert.equal(view.find({ text: 'new one' }), null)
   await view.post('schedules.changed', { schedules: [ended('o1', 'old one', 60_000), { ...fresh, pendingSince: null, lastStatus: 'done', history: [{ at: Date.now(), status: 'done' } as never] }] })
   assert.equal(view.find({ text: 'new one' }), null, 'folded by hand, it stays folded')
+  await view.unmount()
+})
+
+test('without the Orca CLI the Terminals tab and the form say so, instead of asking for an agent', async () => {
+  const view = await mount(panel, {
+    host: mockHost({
+      storage: { onboarded: true } as never,
+      requests: { 'schedules.list': () => [], 'terminals.list': () => [], 'runner.status': () => ({ lastTickAt: null, log: [], cli: false }) }
+    })
+  })
+  await view.select({ type: 'Tabs' }, 'terminals')
+  const missing = view.find({ label: 'Orca CLI not found' })
+  assert.ok(String(missing?.props.description).includes('macOS only'))
+  assert.equal(view.find({ label: 'No agent terminals are open in Orca' }), null, 'running claude would not help')
+  assert.equal(view.find({ type: 'Button', text: 'Reload terminals' }), null, 'neither would reading the list again')
+  await view.press({ type: 'IconButton', label: 'New schedule' })
+  assert.ok(view.find({ label: 'Orca CLI not found' }), 'the picker says the same')
   await view.unmount()
 })
 

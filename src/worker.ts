@@ -76,9 +76,9 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   let saved = JSON.stringify(list)
   let lang: Lang = langOf(await orca.storage.get(LANG_KEY))
   const memory = newMemory()
-  const status: RunnerStatus = { lastTickAt: null, log: [] }
   const bin = cli.run ? null : findCli(process.execPath)
   const run: CliRunner | null = cli.run ?? (bin ? cliRunner(bin) : null)
+  const status: RunnerStatus = { lastTickAt: null, log: [], cli: run !== null }
   orca.log(run ? `Orca CLI: ${bin ?? 'test'}` : `Orca CLI not found (worker: ${process.execPath})`)
 
   // One at a time — checks and panel edits must not overwrite each other.

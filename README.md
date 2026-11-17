@@ -8,7 +8,7 @@ Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set tim
 orca plugin install gook-lab/orca-agent-scheduler
 ```
 
-Needs Orca 1.4.248 or newer. Orca asks you to approve what the plugin may do before it runs: a worker on your machine that calls the Orca CLI to send prompts, reads terminal output, agent status and your workspaces, keeps its own storage and shows notifications. Updates: `orca plugin update gook-lab.agent-scheduler`.
+**macOS only for now**, and Orca 1.4.248 or newer. Prompts go out through the CLI inside the Orca app (`<Orca>.app/Contents/Resources/bin/orca`); on Windows and Linux the plugin does not look for it yet, and the panel says `Orca CLI not found` instead of listing terminals. Orca asks you to approve what the plugin may do before it runs: a worker on your machine that calls the Orca CLI to send prompts, reads terminal output, agent status and your workspaces, keeps its own storage and shows notifications. Updates: `orca plugin update gook-lab.agent-scheduler`.
 
 The panel follows Orca's language: Korean when Orca is in Korean, English otherwise. Settings (the gear at the top) can fix it to English or Korean; the status bar and notifications follow.
 
@@ -71,7 +71,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |
 | Schedule in a block | Switch with the name; next run and the rule (a spinner while a run is being sent), then send now, edit, duplicate, delete (Undo for 8 seconds, in the deleted schedule's place); last result and the history. A run waiting its turn shows why in grey; an orange warning appears only when a person must act (the same ones counted on top and in the status bar) |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`. Ones not sent yet are counted apart — `Waiting to send 1 · Sent 2` — so a send stuck on a closed terminal never reads as sent. A new send opens the group and it stays open when that send ends. The newest 20 finished ones are kept |
-| Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
+| Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). When the worker found no Orca CLI it says that instead, since no terminal could show up. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
 | Favorites | Favorite terminals go first on both tabs; kept across Orca restarts by pane |
 | Settings | Language (same as Orca, English or Korean) and Show the introduction again |
 

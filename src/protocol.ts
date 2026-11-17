@@ -13,7 +13,12 @@ export type ScheduleDraft = Pick<Schedule, 'name' | 'terminal' | 'cron' | 'promp
 /** An agent terminal the panel can offer (only the worker can run the Orca CLI). */
 export type TerminalOption = TerminalRef
 
-export type RunnerStatus = { lastTickAt: number | null; log: string[] }
+export type RunnerStatus = {
+  lastTickAt: number | null
+  log: string[]
+  /** False when the worker could not find the Orca CLI — nothing can be listed or sent (README "Sending"). */
+  cli: boolean
+}
 
 /** Plugin storage key of the language ('en' | 'ko'), shared by the panel atom and the worker. */
 export const LANG_KEY = 'lang'

@@ -2,7 +2,7 @@
 import { afterEach, assert, mockHost, mountWorker, test } from 'orca/testing'
 import type { CliResult } from './cli'
 import { blankSchedule, type Schedule } from './engine'
-import type { TerminalOption } from './protocol'
+import type { RunnerStatus, TerminalOption } from './protocol'
 import * as main from './worker'
 
 const rule = '──────────────────────────────'
@@ -298,6 +298,20 @@ test('focus — brings Orca to the terminal with the CLI', async () => {
   assert.deepEqual(calls.find((c) => c[1] === 'switch'), ['terminal', 'switch', '--terminal', 'h2'])
   await worker.deactivate()
   main.cli.run = null
+})
+
+test('the worker says whether it found the Orca CLI; without it no terminal is listed', async () => {
+  fakeCli()
+  let worker = await mountWorker(main, { host: host() })
+  assert.equal(((await worker.request('runner.status')) as RunnerStatus).cli, true)
+  await worker.deactivate()
+  // No fake CLI, and the test's Node is not inside an Orca app — as on Windows or Linux, where there is
+  // no <app>/Contents/Resources/bin/orca next to the worker.
+  main.cli.run = null
+  worker = await mountWorker(main, { host: host() })
+  assert.equal(((await worker.request('runner.status')) as RunnerStatus).cli, false)
+  assert.deepEqual(await worker.request('terminals.list'), [])
+  await worker.deactivate()
 })
 
 test('the terminal list is pushed to the panel after a check, and only when it changes', async () => {

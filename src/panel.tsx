@@ -86,6 +86,8 @@ const favorites = atom<string[]>([])
 const FAVORITES_KEY = 'favorites'
 /** The terminal list is being read — the reload button turns into a spinner. */
 const refreshing = atom(false)
+/** False once the worker says it found no Orca CLI — then no terminal can be listed, whatever is open. */
+const cliFound = atom(true)
 /** The schedule just saved, marked for a moment so the eye finds it. */
 const justSaved = atom<string | null>(null)
 const SAVED_MS = 4000
@@ -206,6 +208,8 @@ function ReloadButton() {
  *  and a reload for once it is running. */
 function NoAgentTerminals() {
   const u = words(read(lang)).ui
+  // Without the CLI the list is empty whatever is running — "run claude" would send people in circles.
+  if (!read(cliFound)) return <EmptyState icon="warning" title={u.noCli} description={u.noCliHint} />
   return (
     <EmptyState icon="terminal" title={u.noTerminals} description={u.noTerminalsHint}>
       <Row>
@@ -272,6 +276,10 @@ export function setup(ctx: PanelContext): () => void {
     .catch(() => undefined)
     .finally(() => set(schedulesLoaded, true))
   void refreshTerminals()
+  void plugin
+    .request('runner.status')
+    .then((s) => set(cliFound, s.cli))
+    .catch(() => undefined)
   const tick = setInterval(() => {
     if (read(ctx.visible)) set(now, Date.now())
   }, 1000)

@@ -503,6 +503,24 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
           ? 'accent'
           : 'neutral'
 
+/** The round mark at a card's left — what a glance takes in first. What is going on now comes before how
+ *  the last run went, and a schedule that is off says only that. */
+const markOf = (
+  s: Schedule,
+  now: { urgent: boolean; queued: boolean; gone: boolean }
+): { tone: ReturnType<typeof statusTone>; glyph: string } => {
+  if (s.sentAt !== null) return { tone: 'accent', glyph: '▸' }
+  if (now.urgent || (now.gone && s.enabled)) return { tone: 'warning', glyph: '!' }
+  if (now.queued) return { tone: 'neutral', glyph: '…' }
+  if (!s.enabled) return { tone: 'neutral', glyph: '○' }
+  const last = s.history[0]
+  if (!last) return { tone: 'neutral', glyph: '•' }
+  const tone = statusTone(last.status)
+  const glyph =
+    tone === 'success' ? '✓' : tone === 'danger' ? '✕' : last.status === 'doneWaiting' ? '?' : tone === 'warning' ? '–' : tone === 'accent' ? '▸' : '•'
+  return { tone, glyph }
+}
+
 /** Waiting on something a person must fix — the worker turns the status bar orange for the same. */
 const needsAttention = (s: Schedule): boolean =>
   s.blocked !== null || (s.pendingSince !== null && s.waitNote !== null && attentionCodes.includes(s.waitNote.code))
@@ -765,9 +783,19 @@ function RecordDetail({ r, glance }: { r: RunRecord; glance?: boolean }) {
 }
 
 function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
+  const status = statusText(read(lang), r.status)
   return (
-    <Box direction="row" align={glance ? 'center' : 'start'} gap="xs">
-      <Badge tone={statusTone(r.status)}>{statusText(read(lang), r.status)}</Badge>
+    <Box direction="row" align="start" gap="xs">
+      {glance ? (
+        // A word, not a badge: the mark at the card's left already has the colour.
+        <Box shrink={false}>
+          <Text size="xs" weight="medium" tone={statusTone(r.status)}>
+            {status}
+          </Text>
+        </Box>
+      ) : (
+        <Badge tone={statusTone(r.status)}>{status}</Badge>
+      )}
       <Box grow shrink minWidth={0}>
         <RecordDetail r={r} glance={glance} />
       </Box>
@@ -820,25 +848,39 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
     : u.off
   const saved = read(justSaved) === s.id
   const open = read(openCards).includes(s.id)
+  const mark = markOf(s, { urgent, queued, gone })
   return (
     // Folded, a card says what a glance is for: which schedule, when it runs next, how the last run
     // went. What the agent wrote, the rule, the prompt, the history and what is done now and then —
     // edit, duplicate, delete — open in place: Orca's panel kit has no menu that pops up.
+    // A filled surface, like a list of cards rather than a form. The border stays: a light theme
+    // gives the card surface the panel's own colour, and only the line then shows where a card ends.
     // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.
-    <Box
-      border={saved ? 'success' : true}
-      background={saved ? 'success' : undefined}
-      radius="md"
-      padding="sm"
-      gap="xs"
-    >
-      {/* The name gets the whole width — next to the buttons a long name broke a word per line. */}
-      <Switch label={soft(s.name)} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
-      <Box direction="row" align="center" gap="xs">
+    <Box border={saved ? 'success' : true} background={saved ? 'success' : 'card'} radius="lg" padding="md" gap="sm">
+      <Box direction="row" align="center" gap="sm">
+        <Box shrink={false} radius="full" background={mark.tone} width={28} height={28} align="center" justify="center">
+          <Text size="sm" weight="semibold" tone={mark.tone}>
+            {mark.glyph}
+          </Text>
+        </Box>
+        {/* The name shares its row with the switch only — next to the buttons a long name broke a word per line. */}
         <Box grow shrink minWidth={0}>
+          <Switch label={soft(s.name)} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
           <Text size="xs" muted>
             {nextText}
           </Text>
+        </Box>
+      </Box>
+      <Box direction="row" align="center" gap="xs">
+        <Box grow shrink minWidth={0}>
+          {s.sentAt !== null ? (
+            <Row gap="xs">
+              <Spinner label={u.running} labelHidden />
+              <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
+            </Row>
+          ) : last ? (
+            <RecordLine r={last} glance={!open} />
+          ) : null}
         </Box>
         <Box shrink={false}>
           <Toolbar label={s.name} gap="none">
@@ -855,14 +897,6 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           </Toolbar>
         </Box>
       </Box>
-      {s.sentAt !== null ? (
-        <Row gap="xs">
-          <Spinner label={u.running} labelHidden />
-          <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
-        </Row>
-      ) : last ? (
-        <RecordLine r={last} glance={!open} />
-      ) : null}
       {note && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
           <Stack gap="xs">

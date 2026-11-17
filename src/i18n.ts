@@ -280,6 +280,7 @@ const en = {
     never: 'This never runs again — check the time',
     name: 'Enter a name',
     terminal: 'Pick an agent terminal (Claude Code, Codex, Gemini CLI)',
+    running: 'Its run is still going — change the terminal once it has ended',
     prompt: 'Enter the prompt to send',
     unknown: 'No such schedule'
   },
@@ -524,6 +525,7 @@ const ko: Words = {
     never: '앞으로 돌지 않습니다 — 시각을 확인해 주세요',
     name: '이름을 적어 주세요',
     terminal: '에이전트 터미널을 골라 주세요(Claude Code·Codex·Gemini CLI)',
+    running: '실행이 아직 끝나지 않았습니다 — 끝난 뒤에 터미널을 바꿔 주세요',
     prompt: '보낼 글을 적어 주세요',
     unknown: '없는 예약입니다'
   },

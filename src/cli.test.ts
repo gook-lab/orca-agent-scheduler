@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { findCli, holdAgents, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
+import { cliRunner, findCli, holdAgents, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
 import type { LiveTerminal } from './engine'
 
 test('실행 중인 Orca 앱 안의 CLI 를 찾는다 — PATH 의 다른 판 대신', () => {
@@ -69,4 +69,24 @@ test('send — a prompt that starts with -- stays the text, not another flag', (
   for (const text of ['--- weekly check ---', '--help', '--terminal=term_b', '--enter']) {
     assert.deepEqual(sendArgs('term_a', text), ['terminal', 'send', '--terminal=term_a', `--text=${text}`, '--enter', '--wait-submit', '8'], 'never an argument of its own')
   }
+})
+
+test('an ok answer in a shape this version does not know: a send is still a send, a list is "could not read"', () => {
+  assert.deepEqual(sentFrom({ ok: true, result: undefined }), { started: false }, 'no result at all')
+  assert.deepEqual(sentFrom({ ok: true, result: null }), { started: false })
+  assert.deepEqual(sentFrom({ ok: true, result: { send: {} } }), { started: false })
+  assert.equal(terminalsFrom({ ok: true, result: undefined }), null)
+  assert.equal(terminalsFrom({ ok: true, result: { terminals: 'none' } }), null, 'not a list')
+  assert.deepEqual(
+    terminalsFrom({ ok: true, result: { terminals: [null, 7, { handle: 5 }, { handle: '' }, { handle: 'h1' }] } })?.map((t) => t.handle),
+    ['h1'],
+    'entries without a handle are passed over'
+  )
+})
+
+test('a call the system will not start is a failed call, not a rejected promise', async () => {
+  // A NUL in an argument makes execFile throw before anything runs.
+  const r = await cliRunner('/bin/echo')(['terminal', 'send', '--text=a\0b'])
+  assert.equal(r.ok, false)
+  assert.match((r as { error: string }).error, /null bytes/)
 })

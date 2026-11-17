@@ -70,6 +70,16 @@ function recordFrom(v: unknown): RunRecord | null {
   }
 }
 
+/** A terminal reference read field by field — what is not text stays empty. */
+function terminalFrom(value: unknown): TerminalRef {
+  const from = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  const terminal = blankTerminal()
+  for (const k of Object.keys(terminal) as (keyof TerminalRef)[]) if (typeof from[k] === 'string') terminal[k] = from[k]
+  return terminal
+}
+
+const samePane = (a: TerminalRef, b: TerminalRef): boolean => a.handle === b.handle || (a.leafId !== '' && a.leafId === b.leafId)
+
 /**
  * Schedules as storage holds them, read field by field. Older shapes miss fields or hold what this
  * version cannot show, and one entry that cannot be read must not stop the rest — a number where the
@@ -80,13 +90,10 @@ export function normalize(value: unknown): Schedule[] {
   return value
     .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && typeof v.id === 'string')
     .map((v) => {
-      const from = (typeof v.terminal === 'object' && v.terminal !== null ? v.terminal : {}) as Record<string, unknown>
-      const terminal = blankTerminal()
-      for (const k of Object.keys(terminal) as (keyof TerminalRef)[]) if (typeof from[k] === 'string') terminal[k] = from[k]
       return {
         id: v.id as string,
         name: text(v.name),
-        terminal,
+        terminal: terminalFrom(v.terminal),
         cron: text(v.cron),
         prompt: text(v.prompt),
         enabled: v.enabled !== false,
@@ -130,7 +137,10 @@ export const orcaCron: { dir: () => string; read: (path: string) => string | nul
 }
 
 export default async function activate(orca: OrcaWorkerApi): Promise<void> {
-  let list = normalize(await orca.storage.get(KEY))
+  const stored = await orca.storage.get(KEY)
+  let list = normalize(stored)
+  // They are left out of the next write, so say so once.
+  if (Array.isArray(stored) && stored.length !== list.length) orca.log(`${stored.length - list.length} stored schedule(s) could not be read and are dropped`)
   let saved = JSON.stringify(list)
   let lang: Lang = langOf(await orca.storage.get(LANG_KEY))
   const memory = newMemory()
@@ -206,22 +216,51 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   const persist = async (): Promise<void> => {
     const text = JSON.stringify(list)
     if (text === saved) return
-    saved = text
     await orca.storage.set(KEY, list)
+    // Only once the write went through: marked saved before it, a write that failed was never tried again.
+    saved = text
     orca.panels.post('schedules.changed', { schedules: list })
     updateStatusBar()
   }
 
-  const runTick = (): Promise<void> =>
+  /**
+   * A panel edit is all or nothing. When storage refuses the write the list goes back to what it was, so
+   * the panel's "could not save" stays true: kept in memory, the edit showed up with the next check, and
+   * a second press of Create added a second copy.
+   */
+  const edit = <T>(change: () => T | Promise<T>): Promise<T> =>
     serial(async () => {
+      const before = structuredClone(list)
+      try {
+        const out = await change()
+        await persist()
+        return out
+      } catch (error) {
+        list = before
+        throw error
+      }
+    })
+
+  // At most one check waits behind the one running. A hung CLI call takes up to a minute; the 30-second
+  // timer then stacked checks, and every panel edit waited behind all of them.
+  let lined = false
+  const runTick = (): Promise<void> => {
+    if (lined) return Promise.resolve()
+    lined = true
+    return serial(async () => {
+      lined = false
       const now = Date.now()
       const r = await tick(list, io, memory, now, lang)
       status.lastTickAt = now
       status.log = [...r.log.map((l) => `${new Date(now).toLocaleTimeString('en-GB')} ${l}`), ...status.log].slice(0, 50)
       for (const l of r.log) orca.log(l)
       notify(r.notices)
+      // A write that fails here is tried again by the next check — what was sent stays known meanwhile.
       await persist()
-    }).then(() => pushTerminals())
+    })
+      .then(() => pushTerminals())
+      .catch((error) => orca.log(`check failed: ${(error as Error).message}`))
+  }
 
   // The panel shows which terminals are open; tell it when that changes.
   let pushed = ''
@@ -275,7 +314,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       for (const s of going) if (s.sentAt === null) orca.log(`${s.name}: ${s.lastStatus} (agent ${ev.state})`)
       notify([...seen.notices, ...r.notices])
       if (seen.changed || r.changed) await persist()
-    })
+    }).catch((error) => orca.log(`agent event failed: ${(error as Error).message}`))
   )
 
   orca.storage.onDidChange((change) => {
@@ -301,48 +340,58 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     return { ok: r.ok }
   })
 
-  orca.panels.handle('schedules.save', (draft: ScheduleDraft) =>
-    serial(async () => {
+  orca.panels.handle('schedules.save', (given: ScheduleDraft) =>
+    edit(() => {
       const e = words(lang).error
-      const name = draft.name.trim()
+      // Read as loosely as storage is: a caller other than the panel may leave fields out.
+      const draft = (typeof given === 'object' && given !== null ? given : {}) as Partial<ScheduleDraft>
+      const name = text(draft.name).trim()
+      const prompt = text(draft.prompt)
+      const terminal = terminalFrom(draft.terminal)
       if (!name && !draft.once) throw invalid(e.name)
-      if (!draft.terminal?.handle || !agentKind(draft.terminal.agent)) throw invalid(e.terminal)
-      if (!draft.prompt.trim()) throw invalid(e.prompt)
+      if (!terminal.handle || !agentKind(terminal.agent)) throw invalid(e.terminal)
+      if (!prompt.trim()) throw invalid(e.prompt)
       if (draft.once) {
         const s: Schedule = {
           ...blankSchedule(newId()),
-          name: name || firstLine(draft.prompt),
-          terminal: { ...blankTerminal(), ...draft.terminal },
+          name: name || firstLine(prompt),
+          terminal,
           cron: '',
-          prompt: draft.prompt,
+          prompt,
           clearFirst: draft.clearFirst === true,
           report: draft.report === true,
           once: true,
           pendingSince: Date.now()
         }
         list = pruneOnce([...list, s])
-        await persist()
+        // Lined up behind this edit, so it runs once the schedule is stored.
         void runTick()
         return s
       }
-      const nextRunAt = nextAfter(draft.cron, Date.now())
+      const cron = text(draft.cron).trim()
+      const nextRunAt = nextAfter(cron, Date.now())
       if (nextRunAt === null) throw invalid(e.never)
       const old = draft.id ? list.find((s) => s.id === draft.id) : undefined
-      const id = old?.id ?? draft.id ?? newId()
+      const moved = old !== undefined && !samePane(old.terminal, terminal)
+      // Its end is read off the terminal it was sent to — moved now, the run would be closed by whatever
+      // the other terminal's agent is doing.
+      if (moved && old.sentAt !== null) throw invalid(e.running)
+      const id = old?.id ?? (typeof draft.id === 'string' && draft.id ? draft.id : newId())
       const s: Schedule = {
         ...(old ?? blankSchedule(id)),
         id,
         name,
-        terminal: { ...blankTerminal(), ...draft.terminal },
-        cron: draft.cron.trim(),
-        prompt: draft.prompt,
-        enabled: draft.enabled,
+        terminal,
+        cron,
+        prompt,
+        enabled: draft.enabled !== false,
         clearFirst: draft.clearFirst === true,
         report: draft.report === true
       }
+      // A /clear typed into the old terminal says nothing about the new one.
+      if (moved) s.clearedFor = null
       s.nextRunAt = s.enabled ? nextRunAt : null
       list = old ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]
-      await persist()
       // A terminal opened since the last check would show as closed until the next one.
       void pushTerminals()
       return s
@@ -350,21 +399,19 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   )
 
   orca.panels.handle('schedules.delete', ({ id }) =>
-    serial(async () => {
+    edit(() => {
       list = list.filter((s) => s.id !== id)
-      await persist()
       return { ok: true as const }
     })
   )
 
   orca.panels.handle('schedules.restore', ({ schedule }) =>
-    serial(async () => {
+    edit(() => {
       const [s] = normalize([schedule])
       if (!s) throw invalid(words(lang).error.unknown)
       if (!list.some((x) => x.id === s.id)) {
         s.nextRunAt = s.enabled && !s.once ? nextAfter(s.cron, Date.now()) : null
         list = [...list, s]
-        await persist()
         void pushTerminals()
       }
       return s
@@ -372,7 +419,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   )
 
   orca.panels.handle('schedules.toggle', ({ id, enabled }) =>
-    serial(async () => {
+    edit(() => {
       const s = find(id)
       s.enabled = enabled
       s.nextRunAt = enabled ? nextAfter(s.cron, Date.now()) : null
@@ -380,17 +427,15 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         s.pendingSince = null
         s.waitNote = null
       }
-      await persist()
       return s
     })
   )
 
   orca.panels.handle('schedules.runNow', async ({ id }) => {
-    const s = await serial(async () => {
+    const s = await edit(() => {
       const s = find(id)
       // One run at a time — a press while its run is going would send the prompt again when that ends.
       if (s.pendingSince === null && s.sentAt === null) s.pendingSince = Date.now()
-      await persist()
       return s
     })
     void runTick()
@@ -439,7 +484,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   orca.panels.handle('orcacron.list', async () => (await importable()).list)
 
   orca.panels.handle('orcacron.import', ({ ids }) =>
-    serial(async () => {
+    edit(async () => {
       const { items, open } = await importable()
       const wanted = new Set(Array.isArray(ids) ? ids : [])
       const fresh = items
@@ -447,7 +492,6 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         .map((i) => scheduleFrom(i, locate(i.terminal, open) ?? i.terminal))
       if (fresh.length > 0) {
         list = [...list, ...fresh]
-        await persist()
         void pushTerminals()
       }
       return { added: fresh.length }

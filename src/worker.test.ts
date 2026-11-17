@@ -1,5 +1,6 @@
 // Runs src/worker.ts against the same orca object Orca hands it (a fake host).
-import { afterEach, assert, mockHost, mountWorker, test } from 'orca/testing'
+import { mock } from 'node:test'
+import { afterEach, assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { CliResult } from './cli'
 import { blankSchedule, type Schedule } from './engine'
 import { importedId } from './orcacron'
@@ -585,4 +586,153 @@ test('a stored link that is not a web link is dropped with the rest kept', () =>
     { at: 1, status: 'success', summary: 'Done' },
     { at: 0, status: 'success' }
   ])
+})
+
+/** A host whose storage can refuse writes. What it took is in `store`. */
+function flakyHost() {
+  const store: Record<string, unknown> = {}
+  const state: { refuse: (value: unknown) => boolean } = { refuse: () => false }
+  const h = mockHost({
+    results: {
+      'workspace.list': { workspaces: [], truncated: false },
+      'terminal.read': { lines: idle, truncated: false },
+      'statusBar.update': { ok: true },
+      'notifications.show': { delivered: true },
+      'storage.set': ({ key, value }: { key: string; value: unknown }) => {
+        if (state.refuse(value)) throw hostError('unavailable', 'disk full')
+        store[key] = value
+        return { ok: true }
+      }
+    }
+  })
+  return { h, store, state }
+}
+const listed = async (worker: Awaited<ReturnType<typeof mountWorker>>): Promise<Schedule[]> => (await worker.request('schedules.list')) as Schedule[]
+
+test('an edit storage refuses is not kept: trying again adds one schedule, and a toggle or delete goes back', async () => {
+  fakeCli()
+  const { h, store, state } = flakyHost()
+  const worker = await mountWorker(main, { host: h })
+  state.refuse = () => true
+  await assert.rejects(worker.request('schedules.save', draft), /disk full/)
+  assert.deepEqual(await listed(worker), [], 'the panel was told it failed, and it is not in the list')
+  state.refuse = () => false
+  const s = (await worker.request('schedules.save', draft)) as Schedule
+  assert.equal((store.schedules as Schedule[]).length, 1, 'one schedule, not the refused one as well')
+  assert.equal((await listed(worker)).length, 1)
+
+  state.refuse = () => true
+  await assert.rejects(worker.request('schedules.toggle', { id: s.id, enabled: false }), /disk full/)
+  await assert.rejects(worker.request('schedules.delete', { id: s.id }), /disk full/)
+  const [kept] = await listed(worker)
+  assert.equal(kept.enabled, true, 'still on')
+  assert.ok(kept.nextRunAt, 'with its next run')
+  await worker.deactivate()
+})
+
+test('a write that fails after a send is tried again — the run stays known and nothing is sent twice', async () => {
+  const calls = fakeCli()
+  const { h, store, state } = flakyHost()
+  const worker = await mountWorker(main, { host: h })
+  const s = (await worker.request('schedules.save', draft)) as Schedule
+  const sent = (v: unknown): boolean => (v as Schedule[]).some((x) => x.sentAt !== null)
+  state.refuse = sent
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.equal(sentText(calls).length, 1)
+  assert.equal(sent(store.schedules), false, 'the write after the send was refused')
+  assert.ok(worker.logs.includes('check failed: disk full'), 'and that is in the log')
+  state.refuse = () => false
+  // Any later write carries it: here the next press, which itself changes nothing.
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.equal(sent(store.schedules), true, 'stored now')
+  assert.equal(sentText(calls).length, 1, 'and not sent a second time')
+  await worker.deactivate()
+})
+
+/** Two Claude Code terminals — a schedule can be moved from one to the other. */
+const twoClaude: CliResult = {
+  ok: true,
+  result: {
+    terminals: [
+      { handle: 'h1', title: 'Morning', agentIdentity: 'claude', worktreeId: 'w1', tabId: 't1', leafId: 'l1', lastOutputAt: old, writable: true },
+      { handle: 'h4', title: 'Evening', agentIdentity: 'claude', worktreeId: 'w1', tabId: 't4', leafId: 'l4', lastOutputAt: old, writable: true }
+    ]
+  }
+}
+const evening = { handle: 'h4', title: 'Evening', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: 't4', leafId: 'l4' }
+
+test('a schedule whose run is going keeps its terminal — its end is read off the one it was sent to', async () => {
+  fakeCli({ list: twoClaude })
+  const worker = await mountWorker(main, { host: host() })
+  const s = (await worker.request('schedules.save', draft)) as Schedule
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.ok((await listed(worker))[0].sentAt, 'running')
+  await assert.rejects(worker.request('schedules.save', { ...draft, id: s.id, terminal: evening }), /still going/)
+  const renamed = (await worker.request('schedules.save', { ...draft, id: s.id, name: 'Renamed' })) as Schedule
+  assert.equal(renamed.name, 'Renamed', 'everything else can change meanwhile')
+  const [now] = await listed(worker)
+  assert.deepEqual(now.terminal, terminal)
+  assert.ok(now.sentAt, 'and the run goes on')
+  await worker.deactivate()
+})
+
+test('moved while it waits, a schedule starts over on the new terminal: /clear is typed there', async () => {
+  const calls = fakeCli({ list: twoClaude })
+  const worker = await mountWorker(main, { host: host() })
+  const fresh = { ...draft, name: 'Fresh start', clearFirst: true }
+  const s = (await worker.request('schedules.save', fresh)) as Schedule
+  const sends = (): string[][] => calls.filter((x) => x[1] === 'send').map((x) => [x[2], x[3]])
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.deepEqual(sends(), [['--terminal=h1', '--text=/clear']], 'cleared; the prompt goes out on a later check')
+  await worker.request('schedules.save', { ...fresh, id: s.id, terminal: evening })
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.deepEqual(sends()[1], ['--terminal=h4', '--text=/clear'], 'the /clear typed into the old terminal says nothing about this one')
+  await worker.deactivate()
+})
+
+test('a save reads its input as loosely as storage is read — a missing or mistyped field is a refusal, not a crash', async () => {
+  fakeCli()
+  const worker = await mountWorker(main, { host: host() })
+  // The form's own wording, not a TypeError that happens to name the field.
+  const save = (input: unknown): Promise<unknown> => worker.request('schedules.save', input as never)
+  await assert.rejects(save(null), /^Error: Enter a name$/)
+  await assert.rejects(save({ ...draft, name: 5 }), /^Error: Enter a name$/)
+  await assert.rejects(save({ ...draft, terminal: 'h1' }), /^Error: Pick an agent terminal/)
+  await assert.rejects(save({ ...draft, prompt: undefined }), /^Error: Enter the prompt to send$/)
+  await assert.rejects(save({ ...draft, cron: 9 }), /^Error: This never runs again/)
+  assert.deepEqual(await listed(worker), [])
+  await worker.deactivate()
+})
+
+test('checks do not pile up behind a CLI call that hangs: one runs, one waits', async () => {
+  let lists = 0
+  const held: (() => void)[] = []
+  main.cli.run = (args) => {
+    if (args[1] !== 'list') return Promise.resolve({ ok: true, result: {} })
+    lists++
+    return new Promise((resolve) => held.push(() => resolve({ ok: true, result: { terminals: [] } })))
+  }
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    const waiting: Schedule = { ...blankSchedule('s1'), name: 'A', terminal, prompt: 'x', pendingSince: Date.now() }
+    const worker = await mountWorker(main, { host: host({ schedules: [waiting] }) })
+    await settle()
+    assert.equal(lists, 1, 'the first check is reading the terminal list, and the CLI does not answer')
+    // Two minutes of the 30-second timer.
+    for (let i = 0; i < 4; i++) mock.timers.tick(main.TICK_MS)
+    // Let everything through: each check reads the list once, and once more for the panel afterwards.
+    for (let i = 0; i < 20 && (held.length > 0 || i < 3); i++) {
+      for (const go of held.splice(0)) go()
+      await settle()
+    }
+    assert.equal(lists, 4, 'two checks ran — the one that hung and one behind it — not five')
+    await worker.deactivate()
+  } finally {
+    mock.timers.reset()
+  }
 })

@@ -650,3 +650,55 @@ test('a late result line is taken only for the run it belongs to, and only for a
   await tick([closed], fakeIo({ live: [], screens: { h1: line(sentAt) } }).io, newMemory(), ended + min)
   assert.deepEqual(closed.history[0], noLine)
 })
+
+test('a send that throws counts as failed — the prompt is not typed again on the next check', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo()
+  let tries = 0
+  f.io.send = async () => {
+    tries++
+    throw new Error('boom')
+  }
+  const r = await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.equal(tries, 1)
+  assert.equal(s.pendingSince, null, 'no longer waiting to go out')
+  assert.equal(s.sentAt, null)
+  assert.equal(s.lastStatus, 'failed')
+  assert.deepEqual(s.history[0].note, { code: 'sendFailed', detail: 'boom' })
+  assert.ok(r.notices.some((n) => n.status === 'failed'), 'and a person is told')
+  await tick([s], f.io, newMemory(), nine + 40_000)
+  assert.equal(tries, 1, 'nobody saw how it ended — typed again, the prompt could run twice')
+
+  // The same for the /clear that goes first.
+  const c = sched({ nextRunAt: nine, clearFirst: true })
+  await tick([c], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(c.history[0].note, { code: 'clearFailed', detail: 'boom' })
+  assert.equal(c.pendingSince, null)
+})
+
+test('one schedule whose check throws is logged, and the others still go out', async () => {
+  const bad = sched({ id: 'bad', name: 'Broken', nextRunAt: nine })
+  Object.defineProperty(bad, 'clearFirst', {
+    get() {
+      throw new Error('boom')
+    }
+  })
+  const good = sched({ id: 'good', name: 'Evening', nextRunAt: nine, terminal: { ...sched().terminal, handle: 'h2', leafId: 'leaf2', tabId: 'tab2' } })
+  const f = fakeIo({ live: [term(), term({ handle: 'h2', leafId: 'leaf2', tabId: 'tab2' })], screens: { h1: idle, h2: idle } })
+  const r = await tick([bad, good], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [['h2', 'Plan the day']], 'the one after it is not skipped')
+  assert.ok(r.log.includes('Broken: check failed — boom'))
+  assert.equal(bad.pendingSince, nine, 'still waiting — tried again at the next check')
+})
+
+test('a terminal list that throws is a wait, like one that could not be read', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo()
+  f.io.terminals = async () => {
+    throw new Error('list broke')
+  }
+  const r = await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(s.waitNote, { code: 'cli' })
+  assert.ok(r.log.includes('terminal list failed — list broke'))
+  assert.deepEqual(f.sent, [])
+})

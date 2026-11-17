@@ -31,7 +31,13 @@ export function parseCli(stdout: string, error: Error | null): CliResult {
 export function cliRunner(bin: string, timeoutMs = 60_000): CliRunner {
   return (args) =>
     new Promise((resolve) => {
-      execFile(bin, [...args, '--json'], { timeout: timeoutMs, maxBuffer: 8 << 20 }, (error, stdout) => resolve(parseCli(stdout, error)))
+      // execFile throws, rather than calling back, for arguments it will not pass on (a NUL in the text).
+      // That is a failed call like any other: as a rejected promise it ended the whole check.
+      try {
+        execFile(bin, [...args, '--json'], { timeout: timeoutMs, maxBuffer: 8 << 20 }, (error, stdout) => resolve(parseCli(stdout, error)))
+      } catch (error) {
+        resolve({ ok: false, error: (error as Error).message })
+      }
     })
 }
 
@@ -49,10 +55,11 @@ type CliTerminal = {
 /** `orca terminal list` → the terminals that take input. Null when the list could not be read. */
 export function terminalsFrom(r: CliResult): LiveTerminal[] | null {
   if (!r.ok) return null
-  const list = (r.result as { terminals?: CliTerminal[] }).terminals
-  if (!list) return null
+  const list = (r.result as { terminals?: unknown } | null | undefined)?.terminals
+  // An answer in a shape this version does not know is "could not read", not an exception.
+  if (!Array.isArray(list)) return null
   return list
-    .filter((t) => t.handle && t.writable !== false)
+    .filter((t): t is CliTerminal => typeof t === 'object' && t !== null && typeof t.handle === 'string' && t.handle !== '' && t.writable !== false)
     .map((t) => ({
       handle: t.handle as string,
       title: t.title ?? '',
@@ -93,9 +100,10 @@ export function holdAgents(
  *  ("Unknown flag", or the help text for `--help`) and never reaches the terminal. */
 export const sendArgs = (handle: string, text: string): string[] => ['terminal', 'send', `--terminal=${handle}`, `--text=${text}`, '--enter', '--wait-submit', '8']
 
-/** `result.send.prompt.stages` holds `turn_started` once the agent was seen starting the turn (Orca 1.4.25x). */
+/** `result.send.prompt.stages` holds `turn_started` once the agent was seen starting the turn (Orca 1.4.25x).
+ *  An ok answer without the stages is still a send: the text went in, only the turn's start was not seen. */
 export function sentFrom(r: CliResult): SendResult {
   if (!r.ok) return { error: r.error }
-  const stages = (r.result as { send?: { prompt?: { stages?: unknown } } }).send?.prompt?.stages
+  const stages = (r.result as { send?: { prompt?: { stages?: unknown } } } | null | undefined)?.send?.prompt?.stages
   return { started: Array.isArray(stages) && stages.includes('turn_started') }
 }

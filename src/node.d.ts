@@ -19,3 +19,10 @@ declare module 'node:os' {
 }
 
 declare const process: { execPath: string; env: Record<string, string | undefined> }
+
+declare module 'node:test' {
+  /** Fake timers — the one part a test here uses, to fire the worker's 30-second timer by hand. */
+  export const mock: {
+    timers: { enable(options: { apis: ('setInterval' | 'setTimeout')[] }): void; tick(ms: number): void; reset(): void }
+  }
+}

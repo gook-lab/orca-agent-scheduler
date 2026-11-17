@@ -2,7 +2,7 @@
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
 import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
-import { whenText, words } from './i18n'
+import { statusText, whenText, words } from './i18n'
 import * as panel from './panel'
 import { zoneText } from './timespec'
 
@@ -249,6 +249,56 @@ test('on top: how many are on and ran today, in words; badges only for waiting, 
   await view.post('schedules.changed', { schedules: [morning, stuck, off] })
   assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 1, 'orange only for the one counted')
   assert.ok(view.find({ text: 'Next today 23:59 · Morning report' }))
+  await view.unmount()
+})
+
+test('a card starts with a round mark: what is going on now, else how the last run went; folded, the result is a word', async () => {
+  const view = await mount(panel, { host: host() })
+  type Last = NonNullable<Schedule['lastStatus']>
+  const ran = (status: Last): Partial<Schedule> => ({ lastStatus: status, history: [{ at: Date.now() - 60_000, status, tookMs: 60_000 }] })
+  const mark = async (over: Partial<Schedule>): Promise<[string, unknown][]> => {
+    await view.post('schedules.changed', {
+      schedules: [{ ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] }, nextRunAt: at(9, 0, 1), ...over }]
+    })
+    return view.findAll({ type: 'Text', text: /^[•✓✕–?○▸!…]$/ }).map((e) => [e.text, e.props.tone])
+  }
+  assert.deepEqual(await mark({}), [['•', 'neutral']], 'no run yet')
+  assert.deepEqual(await mark(ran('success')), [['✓', 'success']])
+  assert.deepEqual(await mark(ran('done')), [['✓', 'success']], 'ended without a result line — still a finished run')
+  assert.deepEqual(await mark(ran('failed')), [['✕', 'danger']])
+  assert.deepEqual(await mark(ran('skipped')), [['–', 'warning']])
+  assert.deepEqual(await mark(ran('doneWaiting')), [['?', 'warning']], 'stopped at a question')
+  // What is going on now comes before the last result.
+  assert.deepEqual(await mark({ ...ran('failed'), sentAt: Date.now() }), [['▸', 'accent']], 'running')
+  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() - 60_000, waitNote: { code: 'typing' } }), [['!', 'warning']], 'a person must act')
+  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() }), [['…', 'neutral']], 'waiting its turn')
+  assert.deepEqual(await mark({ ...ran('success'), terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }), [['!', 'warning']], 'on, and its terminal is closed')
+  assert.deepEqual(await mark({ ...ran('failed'), enabled: false }), [['○', 'neutral']], 'off says only that')
+  assert.deepEqual(
+    await mark({ ...ran('failed'), enabled: false, terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }),
+    [['○', 'neutral']],
+    'off with a closed terminal is still just off'
+  )
+
+  // Folded: the mark has the colour, so the result is a word. Opened: the badge, with what the agent wrote.
+  await mark(ran('failed'))
+  const failed = statusText('en', 'failed')
+  assert.equal(view.find({ type: 'Badge', text: failed }), null, 'no badge beside the mark')
+  assert.equal(view.find({ type: 'Text', text: failed })?.props.tone, 'danger')
+  await unfold(view)
+  assert.ok(view.find({ type: 'Badge', text: failed }), 'opened: the badge')
+  assert.equal(view.find({ type: 'Text', text: failed }), null)
+
+  // The filled surface keeps a line around it: a light theme gives that surface the panel's own colour.
+  const lines: unknown[] = []
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return
+    const { props, children } = node as { props?: Record<string, unknown>; children?: unknown[] }
+    if (props?.background === 'card') lines.push(props.border)
+    children?.forEach(walk)
+  }
+  walk(view.tree())
+  assert.deepEqual(lines, [true], 'one card, with its line')
   await view.unmount()
 })
 
@@ -1248,7 +1298,7 @@ test('a folded card is for a glance — name, next run, how the last one went; t
   }
   await view.post('schedules.changed', { schedules: [s] })
   const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
-  const card = (): string[] => view.findAll({ type: 'IconButton' }).map((e) => e.label).filter((label) => ['Send now', 'More', 'Less', 'Edit', 'Duplicate', 'Delete'].includes(label))
+  const card = (): string[] => view.findAll({ type: 'IconButton' }).map((e) => e.label ?? '').filter((label) => ['Send now', 'More', 'Less', 'Edit', 'Duplicate', 'Delete'].includes(label))
   assert.deepEqual(card(), ['Send now', 'More'], 'two buttons, not four')
   const line = texts().find((x) => x.startsWith('next '))
   assert.ok(line?.startsWith(`next ${whenText('en', next)} · in 2h 3`) && /in 2h 3[23]m$/.test(line), `when, and how long until then — ${line}`)

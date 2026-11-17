@@ -241,6 +241,8 @@ export type TickResult = { log: string[]; notices: Notice[] }
 
 /** Once every 30 seconds. Updates the schedules and returns what to log and announce. `lang` words the
  *  result ask added to a prompt. */
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
 export async function tick(list: Schedule[], io: Io, memory: Memory, now: number, lang: Lang = 'en'): Promise<TickResult> {
   const log: string[] = []
   const notices: Notice[] = []
@@ -258,7 +260,15 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
   }
 
-  const live = list.some((s) => s.sentAt !== null || s.pendingSince !== null || awaitingLine(s, now)) ? await io.terminals() : null
+  let live: LiveTerminal[] | null = null
+  if (list.some((s) => s.sentAt !== null || s.pendingSince !== null || awaitingLine(s, now))) {
+    try {
+      live = await io.terminals()
+    } catch (error) {
+      // As when the list could not be read: runs wait, and give up after the usual time.
+      log.push(`terminal list failed — ${errorText(error)}`)
+    }
+  }
   // undefined = could not read this time (try again next check).
   const screens = new Map<string, string[] | null | undefined>()
   const screen = async (handle: string): Promise<string[] | null | undefined> => {
@@ -287,14 +297,24 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     return Math.max(printed == null ? 0 : now - printed, changed === undefined ? 0 : now - changed)
   }
 
+  // A send that throws has an outcome nobody saw — the text may be in the terminal. It counts as failed
+  // and is not sent again: left waiting, the next check would type the prompt a second time.
+  const send = async (handle: string, text: string): Promise<SendResult> => {
+    try {
+      return await io.send(handle, text)
+    } catch (error) {
+      return { error: errorText(error) }
+    }
+  }
+
   const used = new Set<string>()
-  for (const s of list) {
+  const step = async (s: Schedule): Promise<void> => {
     // 2. Sent runs — wait for the end. It usually comes as an agent status event (onAgentStatus).
     if (s.sentAt !== null) await watch(s, live, screen, quietFor, memory, now, log, notices)
     else await lateReport(s, live, screen, now, log, notices)
 
     // 3. Due runs — send once the terminal is idle.
-    if (s.pendingSince === null) continue
+    if (s.pendingSince === null) return
     const waitOrGiveUp = (why: NoteCode): void => {
       if (now - (s.pendingSince ?? now) < limits.maxWaitMs) {
         s.waitNote = { code: why }
@@ -309,67 +329,67 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
     if (s.sentAt !== null) {
       waitOrGiveUp('previous')
-      continue
+      return
     }
     if (!live) {
       waitOrGiveUp('cli')
-      continue
+      return
     }
     const t = locate(s.terminal, live)
     if (!t) {
       waitOrGiveUp('missing')
-      continue
+      return
     }
     adopt(s, t)
     const kind = agentKind(t.agent)
     if (!kind) {
       // Only a shell is left — the prompt would run as a shell command.
       waitOrGiveUp('noAgent')
-      continue
+      return
     }
     if (used.has(t.handle)) {
       s.waitNote = { code: 'sameTerminal' }
-      continue
+      return
     }
     // Another schedule's run is still going here. Its end would be read off this run's reply, and this
     // run's off its — so wait; a run that went silent is closed by `watch` within finishedQuietMs.
     if (list.some((o) => o !== s && o.sentAt !== null && locate(o.terminal, live) === t)) {
       waitOrGiveUp('otherRun')
-      continue
+      return
     }
     const lines = await screen(t.handle)
     if (lines === undefined) {
       waitOrGiveUp('unreadable')
-      continue
+      return
     }
     if (lines === null) {
       waitOrGiveUp('missing')
-      continue
+      return
     }
     const quiet = quietFor(t.handle, t)
     // A stale "working" (a missed done event) stops counting once the screen has been still for a while.
     if (memory.agents.get(t.handle) === 'working' && quiet < limits.finishedQuietMs) {
       waitOrGiveUp('busy')
-      continue
+      return
     }
     if (quiet < limits.quietMs) {
       waitOrGiveUp('moving')
-      continue
+      return
     }
     const prompt = promptState(lines, kind)
     if (prompt === 'typing') {
       waitOrGiveUp('typing')
-      continue
+      return
     }
     if (prompt === 'unknown') {
       waitOrGiveUp(permissionPrompt(lines) ? 'dialog' : 'noPrompt')
-      continue
+      return
     }
 
     used.add(t.handle)
     if (s.clearFirst && s.clearedFor !== s.pendingSince) {
       // New conversation — /clear first, the prompt on a later check once the screen settles again.
-      const r = await io.send(t.handle, '/clear')
+      const r = await send(t.handle, '/clear')
       if ('error' in r) {
         const note: Note = { code: 'clearFailed', detail: r.error }
         record(s, { at: now, status: 'failed', note })
@@ -383,11 +403,11 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
         memory.screens.set(t.handle, { hash: '', changedAt: now })
         log.push(`${s.name}: sent /clear → ${s.terminal.title}`)
       }
-      continue
+      return
     }
 
     const late = now - s.pendingSince
-    const r = await io.send(t.handle, asksReport(s) ? `${s.prompt.trimEnd()} ${words(lang).reportAsk(reportToken(now))}` : s.prompt)
+    const r = await send(t.handle, asksReport(s) ? `${s.prompt.trimEnd()} ${words(lang).reportAsk(reportToken(now))}` : s.prompt)
     s.pendingSince = null
     s.waitNote = null
     if ('error' in r) {
@@ -395,7 +415,7 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       record(s, { at: now, status: 'failed', note })
       notices.push({ name: s.name, status: 'failed', note })
       log.push(`${s.name}: send failed — ${r.error}`)
-      continue
+      return
     }
     s.sentAt = now
     // Catching up on a run whose time passed unchecked — it still goes out once, and says so.
@@ -407,6 +427,14 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     s.lastStatus = 'sent'
     memory.screens.set(t.handle, { hash: '', changedAt: now })
     log.push(`${s.name}: sent → ${s.terminal.title}${r.started ? '' : ' (turn start not seen)'}`)
+  }
+  // One schedule that throws must not take the others' turn with it — it is logged and tried again.
+  for (const s of list) {
+    try {
+      await step(s)
+    } catch (error) {
+      log.push(`${s.name}: check failed — ${errorText(error)}`)
+    }
   }
   return { log, notices }
 }

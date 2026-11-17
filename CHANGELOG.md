@@ -2,6 +2,18 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.0 — 2026-11-17
+
+The schedule card, redrawn, and five ways a check could go wrong, closed.
+
+- **A card is a filled surface with a line around it and a round mark at its left.** The mark is for a glance down the list: what is going on now — running ▸, a person must act !, waiting to send … — else how the last run went — ✓ ✕ – ? — and ○ when the schedule is off. The name and its switch sit beside it with the next run under them. Folded, the last result is a word in the mark's colour (`Succeeded today 16:51 · took 3 min`) instead of a badge that said the same thing twice; opened, the badge is back with what the agent wrote. All colours come from Orca's theme, and the line stays because a light theme gives the card surface the panel's own colour — without it nothing showed where a card ends. Checked on the real panel at 280 and 457 px in the dark theme, and in both themes with the scenarios.
+- **A send that throws is not sent again.** When the CLI call itself failed in a way nobody saw the end of, the run stayed "waiting to send" and the next check typed the prompt a second time. It is now recorded as Failed, once.
+- **One schedule that throws no longer ends the check.** The schedules after it were skipped without a word in the log. It is logged (`<name>: check failed — …`) and tried again; the others go out. A terminal list in a shape this version does not know, or one that throws, is a wait like a missing CLI.
+- **An edit storage refuses is undone.** The form said it could not save while the worker kept the schedule in memory, and never wrote it — so it came back later, and a second press of Create added a second copy. Now the edit is rolled back, and a write that fails after a send is tried again with the next check.
+- **A schedule whose run is going keeps its terminal.** Its end is read off the terminal it was sent to; moved meanwhile, the run was closed by whatever the other terminal's agent was doing. The form says `Its run is still going — change the terminal once it has ended`; everything else can be edited. A schedule moved while it waits types its `/clear` into the new terminal.
+- **Checks do not pile up behind a hung CLI call.** One runs and at most one waits; before, the 30-second timer stacked them and every panel edit waited behind them all.
+- A save from something other than the panel with a missing or mistyped field is refused with the form's wording instead of a TypeError. Stored schedules that cannot be read are counted in the log when the worker starts.
+
 ## 0.11.2 — 2026-11-17
 
 - **The counts on top are a line of words**: `4 of 4 on · 2 runs today`. They were pills (`4 schedules`, `4 on`, `2 runs today`) that looked like filters and did nothing when pressed, and `4 schedules` repeated the tab's own count. Badges are left for what is out of the ordinary — waiting, running, need attention — and show only then.

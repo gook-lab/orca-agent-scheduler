@@ -147,6 +147,19 @@ test('send now — goes into the chosen terminal through the Orca CLI once it is
   main.cli.run = null
 })
 
+test('send now while that schedule\'s run is going does not queue a second send', async () => {
+  const calls = fakeCli()
+  const going: Schedule = { ...blankSchedule('s1'), ...draft, sentAt: Date.now() - 5000, lastStatus: 'sent' }
+  const h = host({ schedules: [going] })
+  const worker = await mountWorker(main, { host: h })
+  await worker.request('schedules.runNow', { id: 's1' })
+  await settle()
+  assert.equal((h.data().storage.schedules as Schedule[])[0].pendingSince, null)
+  assert.deepEqual(sentText(calls), [])
+  await worker.deactivate()
+  main.cli.run = null
+})
+
 test('a sent run ends when the agent works and stops', async () => {
   fakeCli()
   const sent: Schedule = { ...blankSchedule('s1'), ...draft, sentAt: Date.now() - 60_000, lastStatus: 'sent' }

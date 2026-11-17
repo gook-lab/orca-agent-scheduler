@@ -108,10 +108,21 @@ const withResult = open.map((s): Schedule =>
       }
     : s
 )
+// What a person has to deal with: a dialog in the way of a due run, a send asked for a moment ago, and a
+// schedule whose terminal was closed.
+const stuck = schedules
+  .filter((s) => !s.once)
+  .map((s): Schedule =>
+    s.id === 's1'
+      ? { ...s, pendingSince: now - 5 * 60_000, waitNote: { code: 'dialog' } }
+      : s.id === 's2'
+        ? { ...s, sentAt: null, lastStatus: null, blocked: null, pendingSince: now }
+        : { ...s, pendingSince: null, waitNote: null }
+  )
 const terminals = schedules.slice(0, 3).map((s) => s.terminal)
-const answered = (list: Schedule[]) => ({
+const answered = (list: Schedule[], openNow = terminals) => ({
   'schedules.list': () => list,
-  'terminals.list': () => terminals,
+  'terminals.list': () => openNow,
   'runner.status': () => ({ lastTickAt: now, log: [], cli: true })
 })
 
@@ -121,6 +132,7 @@ export default defineCheck({
   open: { results, storage: { onboarded: true }, requests: answered(open) },
   late: { results, storage: { onboarded: true }, requests: answered(caughtUp) },
   result: { results, storage: { onboarded: true }, requests: answered(withResult) },
+  stuck: { results, storage: { onboarded: true }, requests: answered(stuck, terminals.slice(0, 2)) },
   busy: { results, storage: { onboarded: true, schedules } },
   korean: { results, storage: { onboarded: true, langPref: 'ko' }, requests: answered(caughtUp) }
 })

@@ -41,7 +41,7 @@ import {
 } from 'orca'
 import { nextRun, parseCron } from './cron'
 import type { RunRecord, Schedule, TerminalRef } from './engine'
-import { attentionCodes, type Lang, langNames, langOfLocale, noteText, recordText, statusText, whenText, words } from './i18n'
+import { attentionCodes, type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
 import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import {
@@ -106,6 +106,8 @@ const onboarded = atom('onboarded', false, { persist: 'storage' })
 const introStep = atom<number | null>(null)
 /** How sending works, opened under the list. */
 const helpOpen = atom(false)
+/** The schedule asked to be deleted, until that is confirmed or cancelled — one at a time. */
+const confirmDelete = atom<string | null>(null)
 /** What each version changed — the releases of the public repository, newest first. */
 const RELEASE_NOTES = 'https://github.com/gook-lab/orca-agent-scheduler/releases'
 
@@ -275,6 +277,8 @@ function openForm(d: Draft): void {
   set(pickerOpen, !d.handle)
   set(openedDraft, JSON.stringify(d))
   set(confirmLeave, null)
+  // The form covers the list — a delete question left under it would be waiting when the list is back.
+  set(confirmDelete, null)
   set(formOpen, true)
   void refreshTerminals()
 }
@@ -302,6 +306,8 @@ export function setup(ctx: PanelContext): () => void {
     plugin.on('schedules.changed', (p) => {
       set(schedules, p.schedules)
       set(schedulesLoaded, true)
+      // A schedule that left the list takes its question with it — restored later, it is not asked about again.
+      if (!p.schedules.some((s) => s.id === read(confirmDelete))) set(confirmDelete, null)
     })
   )
   ctx.subscriptions.push(plugin.on('terminals.changed', (p) => set(terminals, p.terminals)))
@@ -410,6 +416,7 @@ function duplicate(s: Schedule): void {
 }
 
 function remove(s: Schedule): void {
+  set(confirmDelete, null)
   set(undone, s)
   void plugin.request('schedules.delete', { id: s.id })
   const timer = setTimeout(() => {
@@ -499,6 +506,24 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
 /** Waiting on something a person must fix — the worker turns the status bar orange for the same. */
 const needsAttention = (s: Schedule): boolean =>
   s.blocked !== null || (s.pendingSince !== null && s.waitNote !== null && attentionCodes.includes(s.waitNote.code))
+
+/** What a person can do about a note from the card: pick another terminal, or go to this one and answer it. */
+const fixOf: Partial<Record<NoteCode, 'pick' | 'show'>> = {
+  missing: 'pick',
+  noAgent: 'show',
+  typing: 'show',
+  dialog: 'show',
+  noPrompt: 'show',
+  person: 'show',
+  stuckTyping: 'show',
+  stuckNoPrompt: 'show'
+}
+
+/** Edit, opened at the terminal picker. */
+function pickTerminal(s: Schedule): void {
+  edit(s)
+  set(pickerOpen, true)
+}
 
 // ───────────────────────── Top — title and actions, tabs, search ─────────────────────────
 
@@ -724,15 +749,30 @@ function RecordLine({ r }: { r: RunRecord }) {
   )
 }
 
-function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
+function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) {
   const l = read(lang)
   const u = words(l).ui
   const last = s.history[0]
   const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null)
-  const noteLine = note ? noteText(l, note) : !live && read(terminals) !== null ? u.terminalGone : null
-  // Orange only for what the count on top and the status bar call "need attention"; a run that is just
-  // waiting its turn stays grey.
+  // The list of terminals is read and this one is not in it.
+  const gone = live === null && read(terminals) !== null
+  // The callout is only for what the count on top and the status bar call "need attention"; a run that
+  // is just waiting its turn gets a grey badge.
   const urgent = needsAttention(s)
+  const queued = s.pendingSince !== null
+  // One run at a time: a second press while one waits or runs would send the prompt again.
+  const sendBlock = s.sentAt !== null ? u.sendNowRunning : queued ? u.sendNowQueued : gone ? u.terminalGone : null
+  const fix = note ? fixOf[note.code] : undefined
+  const fixButton =
+    fix === 'pick' || (!note && gone) ? (
+      <Button size="xs" variant="outline" onPress={() => pickTerminal(s)}>
+        {u.pickTerminal}
+      </Button>
+    ) : fix === 'show' && live ? (
+      <Button size="xs" variant="outline" icon="open-external" onPress={() => void focusTerminal(live.handle)}>
+        {u.showInOrca}
+      </Button>
+    ) : null
   const nextText = s.enabled ? (s.nextRunAt !== null ? `${u.next} ${whenText(l, s.nextRunAt)}` : u.never) : u.off
   const saved = read(justSaved) === s.id
   return (
@@ -755,10 +795,18 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
         {/* Keeps its width — squeezed, the toolbar wraps its last button onto a second line. */}
         <Box shrink={false}>
           <Toolbar label={s.name} gap="none">
-            <IconButton icon="play" size="xs" variant="ghost" label={u.sendNow} tooltip={u.sendNowTip} onPress={() => void plugin.request('schedules.runNow', { id: s.id })} />
+            <IconButton
+              icon="play"
+              size="xs"
+              variant="ghost"
+              label={u.sendNow}
+              tooltip={sendBlock ?? u.sendNowTip}
+              disabled={sendBlock !== null}
+              onPress={() => void plugin.request('schedules.runNow', { id: s.id })}
+            />
             <IconButton icon="edit" size="xs" variant="ghost" label={u.edit} onPress={() => edit(s)} />
             <IconButton icon="copy" size="xs" variant="ghost" label={u.duplicate} onPress={() => duplicate(s)} />
-            <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => remove(s)} />
+            <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => set(confirmDelete, s.id)} />
           </Toolbar>
         </Box>
       </Box>
@@ -770,14 +818,48 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
       ) : last ? (
         <RecordLine r={last} />
       ) : null}
-      {noteLine && urgent ? (
+      {note && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
-          {noteLine}
+          <Stack gap="xs">
+            <Text size="xs">{noteText(l, note)}</Text>
+            {fixButton ? <Row>{fixButton}</Row> : null}
+          </Stack>
         </Callout>
-      ) : noteLine ? (
-        <Text size="xs" muted>
-          {note ? `${u.waitingToSend} · ${noteLine}` : noteLine}
-        </Text>
+      ) : queued ? (
+        // Shown from the press on — the reason arrives with the first check, a moment later.
+        <Box direction="row" align="start" gap="xs">
+          <Badge>{u.waitingToSend}</Badge>
+          {note ? (
+            <Box grow shrink minWidth={0}>
+              <Text size="xs" muted>
+                {noteText(l, note)}
+              </Text>
+            </Box>
+          ) : null}
+        </Box>
+      ) : gone ? (
+        // A schedule that is on will find no terminal at its next time; one that is off only says so.
+        <Stack gap="xs">
+          <Text size="xs" tone={s.enabled ? 'warning' : undefined} muted={!s.enabled}>
+            {u.terminalGone}
+          </Text>
+          <Row>{fixButton}</Row>
+        </Stack>
+      ) : null}
+      {read(confirmDelete) === s.id ? (
+        <Callout tone="danger" icon="warning" title={u.deleteAsk(s.name)}>
+          <Stack gap="xs">
+            {s.history.length > 0 ? <Text size="xs">{u.deleteLoses(s.history.length)}</Text> : null}
+            <Row gap="xs">
+              <Button size="xs" variant="outline" tone="danger" onPress={() => remove(s)}>
+                {u.remove}
+              </Button>
+              <Button size="xs" variant="ghost" onPress={() => set(confirmDelete, null)}>
+                {u.cancel}
+              </Button>
+            </Row>
+          </Stack>
+        </Callout>
       ) : null}
       {s.history.length > 1 ? (
         <Collapsible title={u.history(s.history.length)}>
@@ -916,7 +998,7 @@ function TerminalBlock({ g }: { g: Group }) {
       {open ? (
         <Stack gap="xs">
           {g.recurring.map((s) => (
-            <ScheduleRow s={s} live={g.live !== null} />
+            <ScheduleRow s={s} live={g.live} />
           ))}
           {g.once.length > 0 ? <SentList list={g.once} /> : null}
         </Stack>

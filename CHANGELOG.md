@@ -2,13 +2,22 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.10.1 — 2026-11-17
+
+- **Send now is one run at a time.** The ▷ on a schedule is off while that schedule waits to send or its run is going, and when its terminal is closed; the tooltip says which. Pressed twice, it used to queue a second send behind the first.
+- A schedule waiting to send shows a grey **Waiting to send** badge from the press on. Before, the card showed nothing until the first check gave a reason.
+- A warning comes with the way out: **Pick a terminal** when the terminal is gone, **Show this terminal in Orca** when a dialog, unsent text or a missing agent is in the way.
+- A schedule that is on while its terminal is closed says so in orange (it was grey), with **Pick a terminal**.
+- Deleting a schedule asks first, in the card, and says how many past results go with it. Undo stays.
+- `orca plugin check` draws one more scene, `stuck`.
+
 ## 0.10.0 — 2026-11-17
 
 - **Ask for a one-line result.** A schedule can ask the agent to end its reply with `[result <tag> ok|failed|skipped] summary [link] URL [end]`. When the run ends the worker reads that line off the terminal screen, and the record shows Succeeded, Failed or Skipped with the summary and the link. The agent only prints text, so nothing new needs permission. On by default for a new schedule, off for Send once and for schedules saved before; a prompt that starts with `/` never gets the sentence. README "Result".
-- **Import from OrcaCron.** Where the menubar app's schedules are on the computer, Settings lists them and copies them over — name, times, terminal, what to send — switched off, so nothing goes out twice while the app still runs its own. README "Import from OrcaCron".
 - A failure notification carries the summary the agent gave.
 - **What's new** under *How sending works* opens the release notes — what each version changed.
 - `orca plugin check` draws one more scene, `result`.
+- Settings can copy schedules over from the OrcaCron menubar app, switched off, on a computer that has that app's schedules. README "Import from OrcaCron".
 
 Fixed
 
@@ -20,7 +29,6 @@ Fixed
 - A run that stopped at a question was green like a finished one; it is orange now.
 - Searching did not open a folded block, so a found schedule stayed out of sight.
 - History counted 30 records and showed 10; it shows all it counts.
-- Import: "Everything is already imported" also showed when what was left could not be imported.
 
 Changed
 

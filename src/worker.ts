@@ -385,7 +385,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   orca.panels.handle('schedules.runNow', async ({ id }) => {
     const s = await serial(async () => {
       const s = find(id)
-      if (s.pendingSince === null) s.pendingSince = Date.now()
+      // One run at a time — a press while its run is going would send the prompt again when that ends.
+      if (s.pendingSince === null && s.sentAt === null) s.pendingSince = Date.now()
       await persist()
       return s
     })

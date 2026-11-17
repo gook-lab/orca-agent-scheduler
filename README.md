@@ -101,7 +101,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Schedules | What runs next, with the time left counting down every second while the panel is in view, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal. With nothing scheduled, one line and an **Open Terminals** button |
 | How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; quiet for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |
-| Schedule in a block | Switch with the name; next run and the rule (a spinner while a run is being sent), then send now, edit, duplicate, delete (Undo for 8 seconds, in the deleted schedule's place); last result and the history, each with the summary and link the agent gave when the schedule asks for a result. A run waiting its turn shows why in grey; an orange warning appears only when a person must act (the same ones counted on top and in the status bar) |
+| Schedule in a block | Switch with the name; next run and the rule (a spinner while a run is being sent), then send now, edit, duplicate, delete; last result and the history, each with the summary and link the agent gave when the schedule asks for a result. **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn has a grey `Waiting to send` badge and the reason; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the way out beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`. Ones not sent yet are counted apart — `Waiting to send 1 · Sent 2` — so a send stuck on a closed terminal never reads as sent. A new send opens the group and it stays open when that send ends. A finished one shows its result as a schedule's does — how long it took, why it failed, the summary and link. The newest 20 finished ones are kept |
 | Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). When the worker found no Orca CLI it says that instead, since no terminal could show up. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
 | Favorites | Favorite terminals go first on both tabs; kept across Orca restarts by pane |
@@ -109,7 +109,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 
 Until the worker first answers, both tabs show a loading placeholder rather than an empty list, and the tab names carry no number (a 0 would read as none).
 
-A closed terminal keeps its block, greyed out, with its last known agent; its schedules wait until it is open again or you pick another terminal in Edit.
+A closed terminal keeps its block, greyed out, with its last known agent. A schedule there that is switched on says in orange that nothing can be sent, with **Pick a terminal** (Edit, opened at the terminal list); a due run waits until the terminal is open again or you pick another.
 
 The status bar shows the next run, and turns orange with a count when a schedule needs attention (terminal not open, no agent, a dialog, text in the input box, the CLI missing).
 
@@ -144,7 +144,7 @@ Sending, showing a terminal and the terminal list go through the Orca CLI, so th
 ```bash
 ORCA="/Applications/Orca.app/Contents/Resources/bin/orca"   # the CLI of the Orca app you run
 $ORCA plugin test .                # tests: schedule maths, screen checks, engine, worker, panel
-$ORCA plugin check . --json        # draws the panel once per scenario (first · empty · open · late · result · busy · korean)
+$ORCA plugin check . --json        # draws the panel once per scenario (first · empty · open · late · result · stuck · busy · korean)
 npx -p typescript tsc -p . --noEmit
 $ORCA plugin dev watch . --check   # load into Orca, reload on each edit (a new permission needs a new approval)
 ```

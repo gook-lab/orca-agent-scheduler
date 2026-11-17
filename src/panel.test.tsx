@@ -11,7 +11,7 @@ const open: TerminalOption[] = [
   { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'w2', workspace: 'toy', tabId: 't2', leafId: 'l2' }
 ]
 
-type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][] }
+type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][]; ran: string[] }
 
 type HostOpts = {
   terminals?: TerminalOption[]
@@ -41,6 +41,10 @@ function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
       'schedules.delete': (input) => {
         calls.deleted?.push((input as { id: string }).id)
         return { ok: true }
+      },
+      'schedules.runNow': (input) => {
+        calls.ran?.push((input as { id: string }).id)
+        return blankSchedule((input as { id: string }).id) as never
       },
       'schedules.restore': (input) => {
         calls.restored?.push((input as { schedule: Schedule }).schedule)
@@ -243,8 +247,9 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   }
   const gone: Schedule = { ...blankSchedule('s2'), name: 'Old', terminal: { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, prompt: 'x' }
   await view.post('schedules.changed', { schedules: [running, gone] })
-  assert.ok(view.find({ text: 'Waiting to send · Screen changed in the last minute (working or typing)' }), 'an ordinary wait stays grey')
-  assert.ok(view.find({ text: /This terminal is not open/ }))
+  assert.ok(view.find({ type: 'Badge', text: 'Waiting to send' }))
+  assert.equal(view.find({ text: 'Screen changed in the last minute (working or typing)' })?.props.muted, true, 'an ordinary wait stays grey')
+  assert.ok(view.find({ text: /This terminal is closed/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
   assert.ok(view.find({ text: 'Done' }))
   const record = view.find({ text: /sent 6 h 2 min late · took 3 min/ })
@@ -390,6 +395,12 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   assert.equal('id' in saved[0], false, 'saved as a new schedule')
   assert.equal(saved[0].prompt, 'Ship it')
   await view.press({ label: 'Delete' })
+  assert.deepEqual(deleted, [], 'asked first')
+  assert.ok(titled(view, 'Callout', 'Delete “Release”?'))
+  await view.press({ type: 'Button', text: 'Cancel' })
+  assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null)
+  await view.press({ label: 'Delete' })
+  await view.press({ type: 'Button', text: 'Delete' })
   assert.deepEqual(deleted, ['s1'])
   await view.post('schedules.changed', { schedules: [] })
   assert.equal(view.find({ label: 'No schedules yet' }), null, 'the block stays while Undo is offered')
@@ -398,6 +409,8 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   await view.press({ text: 'Undo' })
   assert.equal(restored[0].id, 's1')
   assert.equal(view.find({ text: 'Deleted “Release”' }), null)
+  await view.post('schedules.changed', { schedules: [s] })
+  assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'back as it was — not asking again')
   await view.unmount()
 })
 
@@ -409,7 +422,102 @@ test('the worker pushes the terminal list — a closed terminal turns its block 
   assert.equal(show(), false)
   await view.post('terminals.changed', { terminals: [open[1]] })
   assert.equal(show(), true)
-  assert.ok(view.find({ text: /This terminal is not open/ }))
+  assert.ok(view.find({ text: /This terminal is closed/ }))
+  await view.unmount()
+})
+
+test('Send now is for a schedule at rest — off while one waits or runs, or its terminal is closed', async () => {
+  const ran: string[] = []
+  const view = await mount(panel, { host: host({ ran }) })
+  const rest: Schedule = { ...blankSchedule('s1'), name: 'At rest', terminal: { ...open[0] }, nextRunAt: Date.now() + 3600_000 }
+  const queued: Schedule = { ...rest, id: 's2', name: 'Queued', pendingSince: Date.now() }
+  const going: Schedule = { ...rest, id: 's3', name: 'Going', sentAt: Date.now() - 5000, lastStatus: 'sent' }
+  const closed: Schedule = { ...rest, id: 's4', name: 'Closed', terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }
+  await view.post('schedules.changed', { schedules: [rest, queued, going, closed] })
+  const play = view.findAll({ type: 'IconButton', label: 'Send now' })
+  assert.deepEqual(
+    play.map((b) => [b.props.disabled, b.props.tooltip]),
+    [
+      [false, 'Sends as soon as the terminal is idle'],
+      [true, 'Already waiting to send'],
+      [true, 'Already running — send again when this run ends'],
+      [true, 'This terminal is closed — nothing can be sent to it']
+    ]
+  )
+  assert.ok(view.find({ type: 'Badge', text: 'Waiting to send' }), 'a press shows at once, before the first check gives a reason')
+  await view.press(play[0])
+  assert.deepEqual(ran, ['s1'])
+  await view.unmount()
+})
+
+test('a warning comes with what to do about it — pick another terminal, or go to this one', async () => {
+  const focused: string[] = []
+  const view = await mount(panel, { host: host({ focused }) })
+  const base: Schedule = { ...blankSchedule('s1'), name: 'Asks', terminal: { ...open[0] }, nextRunAt: Date.now() + 3600_000 }
+  const dialog: Schedule = { ...base, pendingSince: Date.now() - 60_000, waitNote: { code: 'dialog' } }
+  const missing: Schedule = {
+    ...base,
+    id: 's2',
+    name: 'Lost',
+    terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' },
+    pendingSince: Date.now() - 60_000,
+    waitNote: { code: 'missing' }
+  }
+  const closedOn: Schedule = { ...base, id: 's3', name: 'Closed, on', terminal: { ...open[1], handle: 'h-x', leafId: 'l-x' } }
+  const closedOff: Schedule = { ...closedOn, id: 's4', name: 'Closed, off', enabled: false }
+  // Its terminal went away after the last check found a dialog — the note is still the dialog's.
+  const dialogGone: Schedule = { ...dialog, id: 's5', name: 'Asked, then closed', terminal: { ...open[0], handle: 'h-y', leafId: 'l-y' } }
+  await view.post('schedules.changed', { schedules: [dialog, missing, closedOn, closedOff, dialogGone] })
+  assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 3, 'the three that are due and stuck')
+  assert.equal(view.findAll({ type: 'Button', text: 'Show this terminal in Orca' }).length, 1, 'only where there is a terminal to show')
+  await view.press({ type: 'Button', text: 'Show this terminal in Orca' })
+  assert.deepEqual(focused, ['h1'], 'the dialog is answered in the terminal')
+  const closedText = view.findAll({ text: 'This terminal is closed — nothing can be sent to it' }).filter((e) => e.type === 'Text')
+  assert.deepEqual(
+    closedText.map((e) => [e.props.tone, e.props.muted]),
+    [
+      ['warning', false],
+      [undefined, true]
+    ],
+    'orange while the schedule is on — its next run has nowhere to go; grey when it is off'
+  )
+  const pick = view.findAll({ type: 'Button', text: 'Pick a terminal' })
+  assert.equal(pick.length, 3, 'the one waiting for its terminal and the two closed ones')
+  await view.press(pick[0])
+  assert.equal(view.find({ label: 'Name' })?.props.value, 'Lost', 'Edit opens')
+  assert.ok(view.find({ type: 'ListItem', label: 'Review' }), 'at the list of open terminals')
+  await view.unmount()
+})
+
+test('deleting a schedule says what goes with it', async () => {
+  const deleted: string[] = []
+  const view = await mount(panel, { host: host({ deleted }) })
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'Release',
+    terminal: { ...open[0] },
+    history: [
+      { at: Date.now() - 3600_000, status: 'done' },
+      { at: Date.now() - 7200_000, status: 'done' }
+    ]
+  }
+  const other: Schedule = { ...blankSchedule('s2'), name: 'Other', terminal: { ...open[0] } }
+  await view.post('schedules.changed', { schedules: [s, other] })
+  const bins = view.findAll({ type: 'IconButton', label: 'Delete' })
+  await view.press(bins[0])
+  assert.ok(view.find({ text: 'Its 2 past results go with it.' }))
+  await view.press(bins[1])
+  assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'one question at a time')
+  assert.ok(titled(view, 'Callout', 'Delete “Other”?'))
+  assert.equal(view.find({ text: /past result/ }), null, 'nothing to lose, nothing said')
+  assert.deepEqual(deleted, [])
+  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[1])
+  await view.press({ type: 'IconButton', label: 'Close' })
+  assert.equal(titled(view, 'Callout', 'Delete “Other”?'), null, 'the question does not wait behind the form')
+  await view.press(view.findAll({ type: 'IconButton', label: 'Delete' })[0])
+  await view.post('schedules.changed', { schedules: [other] })
+  await view.post('schedules.changed', { schedules: [s, other] })
+  assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'nor come back with a schedule that left the list and returned')
   await view.unmount()
 })
 

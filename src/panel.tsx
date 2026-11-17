@@ -39,7 +39,7 @@ import {
   type PanelContext
 } from 'orca'
 import { nextRun, parseCron } from './cron'
-import type { Schedule, TerminalRef } from './engine'
+import type { RunRecord, Schedule, TerminalRef } from './engine'
 import { attentionCodes, type Lang, langNames, langOfLocale, noteText, recordText, statusText, whenText, words } from './i18n'
 import { LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
@@ -643,6 +643,21 @@ function TerminalLine({
 
 // ───────────────────────── Schedule — switch, actions, next run, last result ─────────────────────────
 
+/** One result. The text wraps: cut to one line, a late run's record lost how long it took. */
+function RecordLine({ r }: { r: RunRecord }) {
+  const l = read(lang)
+  return (
+    <Box direction="row" align="start" gap="xs">
+      <Badge tone={statusTone(r.status)}>{statusText(l, r.status)}</Badge>
+      <Box grow shrink minWidth={0}>
+        <Text muted size="xs">
+          {[whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
 function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
   const l = read(lang)
   const u = words(l).ui
@@ -687,12 +702,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
           <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
         </Row>
       ) : last ? (
-        <Row gap="xs">
-          <Badge tone={statusTone(last.status)}>{statusText(l, last.status)}</Badge>
-          <Text muted size="xs" truncate>
-            {[whenText(l, last.at), recordText(l, last)].filter(Boolean).join(' · ')}
-          </Text>
-        </Row>
+        <RecordLine r={last} />
       ) : null}
       {noteLine && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
@@ -707,12 +717,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
         <Collapsible title={u.history(s.history.length)}>
           <Stack gap="xs">
             {s.history.slice(0, 10).map((r) => (
-              <Row gap="xs">
-                <Badge tone={statusTone(r.status)}>{statusText(l, r.status)}</Badge>
-                <Text muted size="xs" truncate>
-                  {[whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')}
-                </Text>
-              </Row>
+              <RecordLine r={r} />
             ))}
           </Stack>
         </Collapsible>

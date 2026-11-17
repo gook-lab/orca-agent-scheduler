@@ -2,6 +2,10 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one.
 
+## 0.9.13 — 2026-11-17
+
+- A result line wraps instead of being cut to one line. At 360px a late run's record lost how long it took (`… sent 3 h 12 min late · took 4 …`); past results under a schedule wrap the same way.
+
 ## 0.9.12 — 2026-11-17
 
 - The plugin page gets two screenshots: a late catch-up on the Schedules tab, and the panel in Korean. No change in behaviour.

@@ -324,7 +324,7 @@ const ko: Words = {
     timeout: '6시간 안에 끝나지 않음',
     sendFailed: '보내기 실패',
     clearFailed: '대화 비우기(/clear) 실패',
-    waitedOut: '60분 동안',
+    waitedOut: '60분 기다림',
     notStarted: '시작 미확인',
     noLine: '화면에 결과 줄이 없음'
   },
@@ -537,7 +537,7 @@ export function noteText(lang: Lang, note: Note): string {
   const w = all[lang]
   const base = w.note[note.code] ?? note.code
   if (note.reason) {
-    return lang === 'ko' ? `${base} ${w.note[note.reason]}` : `${base}: ${w.note[note.reason].toLowerCase()}`
+    return lang === 'ko' ? `${base} · ${w.note[note.reason]}` : `${base}: ${w.note[note.reason].toLowerCase()}`
   }
   return note.detail ? `${base}: ${note.detail}` : base
 }

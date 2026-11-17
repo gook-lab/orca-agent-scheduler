@@ -105,6 +105,9 @@ export const limits = {
   quietMs: 60_000,
   /** Quiet this long after sending — an empty input box means done, anything else means stuck. */
   finishedQuietMs: 3 * 60_000,
+  /** A run that ended without its result line is still looked at for this long: an agent that ended its
+   *  turn to wait on its own background work writes the line when that work is done. */
+  lateReportMs: 60 * 60_000,
   historyMax: 30
 }
 
@@ -170,6 +173,43 @@ function reportOn(s: Schedule, lines: string[]): Report | null {
   return s.sentAt !== null && asksReport(s) ? readReport(lines, reportToken(s.sentAt)) : null
 }
 
+/** The last record, when its run was asked for a result line, ended without one, and may still get it. */
+function awaitingLine(s: Schedule, now: number): RunRecord | null {
+  const r = s.history[0]
+  if (!r || s.sentAt !== null || r.tookMs === undefined || now - r.at >= limits.lateReportMs) return null
+  return r.note?.code === 'noLine' || r.note?.reason === 'noLine' ? r : null
+}
+
+/** The result line of a run already recorded as ended without one: the record takes its status, summary
+ *  and link, and stops saying the line is missing. */
+async function lateReport(
+  s: Schedule,
+  live: LiveTerminal[] | null,
+  screen: (handle: string) => Promise<string[] | null | undefined>,
+  now: number,
+  log: string[],
+  notices: Notice[]
+): Promise<void> {
+  const r = awaitingLine(s, now)
+  const t = r && live ? locate(s.terminal, live) : null
+  if (!r || !t) return
+  const lines = await screen(t.handle)
+  const report = lines ? readReport(lines, reportToken(r.at - (r.tookMs ?? 0))) : null
+  if (!report) return
+  const { note, summary: _summary, link: _link, ...rest } = r
+  s.history[0] = {
+    ...rest,
+    status: report.status,
+    // How the end was seen stays; only the missing line goes.
+    ...(note && note.code !== 'noLine' ? { note: { code: note.code } } : {}),
+    ...(report.summary ? { summary: report.summary } : {}),
+    ...(report.link ? { link: report.link } : {})
+  }
+  s.lastStatus = report.status
+  if (report.status === 'failed') notices.push({ name: s.name, status: 'failed', summary: report.summary })
+  log.push(`${s.name}: result line came after the end`)
+}
+
 /** Ends the run in flight and records it; returns the status recorded. `ended` is how the turn ended. */
 function finish(s: Schedule, now: number, ended: Status, endNote?: Note, report?: Report | null): Status {
   // The result line decides the status only of a run that ended normally — one that failed or was stopped stays so.
@@ -218,7 +258,7 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
   }
 
-  const live = list.some((s) => s.sentAt !== null || s.pendingSince !== null) ? await io.terminals() : null
+  const live = list.some((s) => s.sentAt !== null || s.pendingSince !== null || awaitingLine(s, now)) ? await io.terminals() : null
   // undefined = could not read this time (try again next check).
   const screens = new Map<string, string[] | null | undefined>()
   const screen = async (handle: string): Promise<string[] | null | undefined> => {
@@ -238,13 +278,20 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
     return screens.get(handle)
   }
-  const quietFor = (handle: string, t: LiveTerminal | null): number =>
-    now - (t?.lastOutputAt ?? memory.screens.get(handle)?.changedAt ?? now)
+  // How long the terminal has shown nothing new. An idle agent keeps repainting its status line: the
+  // last-output time moves while the text stays (an idle Claude Code, 2026-11-17 — every 7 to 171 s),
+  // so text seen unchanged since an earlier check is quiet as well — whichever says longer.
+  const quietFor = (handle: string, t: LiveTerminal | null): number => {
+    const printed = t?.lastOutputAt
+    const changed = memory.screens.get(handle)?.changedAt
+    return Math.max(printed == null ? 0 : now - printed, changed === undefined ? 0 : now - changed)
+  }
 
   const used = new Set<string>()
   for (const s of list) {
     // 2. Sent runs — wait for the end. It usually comes as an agent status event (onAgentStatus).
     if (s.sentAt !== null) await watch(s, live, screen, quietFor, memory, now, log, notices)
+    else await lateReport(s, live, screen, now, log, notices)
 
     // 3. Due runs — send once the terminal is idle.
     if (s.pendingSince === null) continue
@@ -400,14 +447,21 @@ async function watch(
   }
   // The screen changed since the last check — whatever stopped it (a dialog) was answered.
   if (before && before !== memory.screens.get(s.terminal.handle)?.hash) s.blocked = null
+  // The run's result line is the agent's last word on it. Taken when first seen: the end event may
+  // never come, and on a small pane later output pushes the line off the screen.
+  const told = reportOn(s, lines)
+  if (told) {
+    const status = finish(s, now, 'done', undefined, told)
+    if (status === 'failed') notices.push({ name: s.name, status, summary: told.summary })
+    log.push(`${s.name}: ${status} (result line)`)
+    return
+  }
   const quiet = quietFor(s.terminal.handle, t)
   if (now - s.sentAt < limits.finishedQuietMs || quiet < limits.finishedQuietMs) return
   const prompt = promptState(lines, agentKind(t?.agent ?? s.terminal.agent) ?? 'claude')
   if (prompt === 'empty') {
     // The end event was missed — a quiet screen with an empty input box after sending means done.
-    const report = reportOn(s, lines)
-    finish(s, now, 'done', { code: 'byScreen' }, report)
-    if (report?.status === 'failed') notices.push({ name: s.name, status: 'failed', summary: report.summary })
+    finish(s, now, 'done', { code: 'byScreen' })
     log.push(`${s.name}: done (by screen)`)
   } else if (!s.blocked) {
     s.blocked = { code: prompt === 'typing' ? 'stuckTyping' : permissionPrompt(lines) ? 'person' : 'stuckNoPrompt' }

@@ -92,3 +92,19 @@ test('the tag is four letters or digits, and differs between runs sent at differ
   assert.notEqual(reportToken(nine), reportToken(nine + 86_400_000))
   assert.notEqual(reportToken(nine), reportToken(nine + 30 * 60_000))
 })
+
+test('a link drawn with the mark Claude Code puts before it, on a narrow pane', () => {
+  const lines = [
+    '⏺ The board is as it was: ⧉',
+    '  https://example.com/board/a1B2c3D4e5F6g7H8',
+    '  [result k3f9 skipped] Nothing changed (12 items) [link] ⧉',
+    '  https://example.com/board/a1B2c3D4e5F6g7H8 [end]',
+    '✻ Cogitated for 6s · done 9:04 AM'
+  ]
+  assert.deepEqual(readReport(lines, 'k3f9'), {
+    status: 'skipped',
+    summary: 'Nothing changed (12 items)',
+    link: 'https://example.com/board/a1B2c3D4e5F6g7H8'
+  })
+  assert.deepEqual(readReport(['[result k3f9 ok] Done [link] ⧉ see the board [end]'], 'k3f9'), { status: 'success', summary: 'Done' }, 'no address after the mark — no link')
+})

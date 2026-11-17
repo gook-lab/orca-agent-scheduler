@@ -268,8 +268,11 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     serial(async () => {
       const ev = e as StatusEvent
       if (ev.terminalId) memory.agents.set(ev.terminalId, ev.state)
+      const going = list.filter((s) => s.sentAt !== null)
       const seen = await inspectOnEvent(list, ev, io, SETTLE_MS)
       const r = seen.hold ? { changed: false, notices: [] } : onAgentStatus(list, ev, seen.reports)
+      // How each run ended is in the log: by the agent's event here, or "by screen" / "result line" from a check.
+      for (const s of going) if (s.sentAt === null) orca.log(`${s.name}: ${s.lastStatus} (agent ${ev.state})`)
       notify([...seen.notices, ...r.notices])
       if (seen.changed || r.changed) await persist()
     })

@@ -35,7 +35,7 @@ At the set time the run becomes due and is checked every 30 seconds. The prompt 
 
 | Check | Why |
 |---|---|
-| The screen has been quiet for a minute | The agent or a person may still be working |
+| The terminal has shown nothing new for a minute | The agent or a person may still be working. Nothing new is no output, or the same text as at an earlier check: an idle agent repaints its status line, so the time of its last output alone keeps moving (an idle Claude Code, 2026-11-17 — 7 times in 4 minutes, the text the same throughout) |
 | Orca does not report the agent as working | A working report older than 3 minutes is ignored, in case its end was missed |
 | The input box is visible and empty | A permission or question dialog is open, or a person is typing |
 | No other schedule sent to this terminal in the same check | Two prompts would land in one turn |
@@ -56,7 +56,10 @@ Sending uses `orca terminal send --terminal=<handle> --text=<prompt> --enter --w
 
 - After sending, Orca's agent status events decide the end: working → done or waiting. An outcome the agent reports becomes Succeeded, Failed or Stopped; without one the run is Done, with the time it took. Waiting for input becomes Done (awaiting input) — orange, since a person is needed — with a notification.
 - A done or waiting event while a permission or question dialog is on screen does not end the run. The card shows that a person must answer, and a notification goes out once.
-- If the events are missed, the screen decides: quiet for 3 minutes with an empty input box is Done. Quiet with no input box, or with text left in it, is flagged on the card and in the status bar until the screen moves again.
+- A run that asked for a result ends when its line is on screen — at the first check that sees it, whatever the events say (see Result).
+- If the events are missed, the screen decides: nothing new for 3 minutes with an empty input box is Done. Nothing new with no input box, or with text left in it, is flagged on the card and in the status bar until the screen moves again.
+- An agent that ends its turn to wait for its own background command is still at work. No end event came while the command ran (Claude Code 2.1.326 on Orca 1.4.261), so the run stays open until the agent's last reply. Where the events do not come at all, the screen closes the run after 3 minutes — and its result line is still taken when it comes.
+- The log says how each run ended: `(agent done)`, `(result line)` or `(by screen)` — `orca plugin logs gook-lab.agent-scheduler`.
 - A terminal closed mid-run is Stopped; a run with no end after 6 hours is Timed out.
 
 ## Result — a last line the agent writes
@@ -65,13 +68,16 @@ With **Ask for a one-line result** on (the default for a new schedule; off for S
 
 > When you finish, end your reply with one line in this form: `[result k3f9 STATUS] one-line summary [link] URL [end]` — STATUS is ok, failed or skipped; leave out "[link] URL" when there is no link.
 
-When the run ends, the worker finds that line on the terminal screen — the screen it already reads for the idle check — and the record shows it: **Succeeded**, **Failed** or **Skipped**, the summary under it, and the link, which opens in your browser.
+The worker finds that line on the terminal screen — the screen it already reads for the idle check — and the record shows it: **Succeeded**, **Failed** or **Skipped**, the summary under it, and the link, which opens in your browser.
 
 | Rule | Why |
 |---|---|
 | The agent only prints text | Nothing is written or run for this, so no permission dialog can come of it, and nothing in it depends on which agent it is. Checked live on Claude Code and Codex, including a summary and a link wrapped over several lines; not yet on Gemini CLI |
 | `k3f9` is that run's tag | A line an earlier run left on screen is not taken for this one. The sentence itself, echoed in the terminal, says `STATUS` and is not a result |
 | The newest line that reaches `[end]` counts | A line wrapped to the terminal's width is put back together — the summary with spaces, the link without |
+| The line is taken when first seen, and ends the run | The end event may never come, and on a small pane later output pushes the line off the screen before a quiet moment does |
+| A line that comes after the end is taken for 60 minutes | An agent that ended its turn to wait for its own background command writes the line when the command is done. The record takes its status, summary and link then, and stops saying the line is missing; a late Failed is notified |
+| A mark before the link is passed by | Claude Code draws `⧉` before a link |
 | Only `http` and `https` links are kept, and none with a name before the site (`user@site`) | The panel opens them in the browser, and shows the site in full so you can read where a link leads; `https://known.site@other.site/` would read as one site and lead to another |
 | A turn that failed or was stopped stays so | The line sets the status only of a run that ended normally. A run the agent calls `failed` is announced with its summary |
 | A prompt that starts with `/` gets no sentence | It is a command of the agent — text after it would be read as its arguments |
@@ -99,7 +105,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Title row | **Agent Scheduler**, then New schedule (+), Send once (›), Reload terminals (a spinner while the list is read) and Settings. Settings and the form keep the same row: their title on the left, × on the right, a line under it |
 | Tabs and search | **Schedules N** and **Terminals N**. Entering Terminals reads the terminal list afresh (the reload button spins meanwhile; what is there stays in sight). The search box under them filters both, by terminal title, workspace, agent or schedule name, and opens a folded block that holds a match; a search that hides everything says so with **Clear search** |
 | Schedules | What runs next, with the time left counting down every second while the panel is in view, then counts: schedules, on, waiting, running, need attention, runs today. Below that, one block per terminal. With nothing scheduled, one line and an **Open Terminals** button |
-| How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; quiet for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
+| How sending works | ⓘ under the list. Pressing it opens the rule for sending in place (checked every 30 seconds; nothing new for a minute with an empty input box; skipped after 60 minutes of waiting); pressing it again closes it |
 | Terminal line | Favorite (☆), the agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, workspace and title. In a block, pressing the workspace folds the block, as rows do in Orca's own trees; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** and **New schedule for this terminal** |
 | Schedule in a block | Switch with the name; next run and the rule (a spinner while a run is being sent), then send now, edit, duplicate, delete; last result and the history, each with the summary and link the agent gave when the schedule asks for a result. **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn has a grey `Waiting to send` badge and the reason; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the way out beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box |
 | Sent records | One-off sends sit folded under their terminal as `Sent N · last today 12:03`. Ones not sent yet are counted apart — `Waiting to send 1 · Sent 2` — so a send stuck on a closed terminal never reads as sent. A new send opens the group and it stays open when that send ends. A finished one shows its result as a schedule's does — how long it took, why it failed, the summary and link. The newest 20 finished ones are kept |

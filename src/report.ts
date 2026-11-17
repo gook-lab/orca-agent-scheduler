@@ -49,7 +49,9 @@ export function readReport(lines: string[], token: string): Report | null {
   if (!found) return null
   const cut = found.body.indexOf('[link]')
   const summary = (cut < 0 ? found.body : found.body.slice(0, cut)).replace(/\s+/g, ' ').trim().slice(0, SUMMARY_MAX)
-  const link = cut < 0 ? '' : found.body.slice(cut + '[link]'.length).replace(/\s+/g, '')
+  const after = cut < 0 ? '' : found.body.slice(cut + '[link]'.length).replace(/\s+/g, '')
+  // Claude Code draws a mark (⧉) before a link — the address starts where its scheme does.
+  const link = after.slice(Math.max(0, after.search(/https?:\/\//i)))
   return {
     status: statusOf[found.status],
     summary,

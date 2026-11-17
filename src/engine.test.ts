@@ -505,19 +505,66 @@ test('a schedule that did not ask never reads a result off the screen', async ()
   assert.equal(s.history[0].summary, undefined)
 })
 
-test('watch — a missed end event still reads the result line off the quiet screen', async () => {
+test('watch — the result line ends the run on the first check that sees it, while the terminal still prints', async () => {
   const sentAt = nine
   const s = sched({ report: true, sentAt, sawWorking: true })
+  const plain = sched({ id: 's2', name: 'Plain', sentAt, terminal: { ...sched().terminal, handle: 'h2', leafId: 'leaf2' } })
+  const line = resultScreen(sentAt, '[result TAG failed] Could not reach the server [end]')
   const f = fakeIo({
-    live: [term({ lastOutputAt: sentAt + min })],
-    screens: { h1: resultScreen(sentAt, '[result TAG failed] Could not reach the server [end]') }
+    live: [term({ lastOutputAt: sentAt + 38_000 }), term({ handle: 'h2', leafId: 'leaf2', lastOutputAt: sentAt + 38_000 })],
+    screens: { h1: line, h2: line }
   })
-  const r = await tick([s], f.io, newMemory(), sentAt + 5 * min)
-  assert.equal(s.sentAt, null)
-  assert.equal(s.history[0].status, 'failed')
-  assert.equal(s.history[0].summary, 'Could not reach the server')
-  assert.deepEqual(s.history[0].note, { code: 'byScreen' })
+  const r = await tick([s, plain], f.io, newMemory(), sentAt + 40_000)
+  assert.equal(s.sentAt, null, 'no end event, no quiet screen — the line is enough')
+  assert.deepEqual(s.history[0], { at: sentAt + 40_000, status: 'failed', tookMs: 40_000, summary: 'Could not reach the server' })
   assert.deepEqual(r.notices, [{ name: 'Morning', status: 'failed', summary: 'Could not reach the server' }])
+  assert.ok(r.log.includes('Morning: failed (result line)'))
+  assert.ok(plain.sentAt, 'a run that did not ask for the line is not ended by one')
+})
+
+test('watch — the ask echoed with the prompt is not the result line', async () => {
+  const sentAt = nine
+  const s = sched({ report: true, sentAt, sawWorking: true })
+  const f = fakeIo({ live: [term({ lastOutputAt: sentAt + 38_000 })], screens: { h1: resultScreen(sentAt, '[result TAG STATUS] one-line summary [link] URL [end]') } })
+  await tick([s], f.io, newMemory(), sentAt + 40_000)
+  assert.ok(s.sentAt, 'still going')
+})
+
+test('an idle agent that keeps repainting — the output time moves, the text does not — is quiet', async () => {
+  // Seen on an idle Claude Code: new output every 7 to 171 s, the same text on screen throughout.
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo()
+  const memory = newMemory()
+  const check = async (at: number): Promise<void> => {
+    f.state.live = [term({ lastOutputAt: at - 3_000 })]
+    await tick([s], f.io, memory, at)
+  }
+  await check(nine + 10_000)
+  assert.deepEqual(s.waitNote, { code: 'moving' }, 'first sight')
+  await check(nine + 40_000)
+  assert.deepEqual(f.sent, [], 'the same text for 30 s')
+  await check(nine + 70_000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'the same text for a minute')
+
+  // The run that went out ends by screen the same way — three minutes of the same text.
+  f.state.screens.h1 = ['⏺ Planned the day', rule, '❯ ', rule]
+  for (let at = nine + 100_000; at <= nine + 250_000; at += 30_000) await check(at)
+  assert.ok(s.sentAt, 'the reply was first seen at 100 s — the same text for 150 s')
+  await check(nine + 280_000)
+  assert.equal(s.sentAt, null)
+  assert.deepEqual(s.history[0].note, { code: 'byScreen' })
+})
+
+test('text that changes between checks is not quiet, however long ago the terminal says it printed', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo({ live: [term({ lastOutputAt: null })] })
+  const memory = newMemory()
+  for (const [at, line] of [[10_000, 'step 1'], [40_000, 'step 2'], [70_000, 'step 3'], [100_000, 'step 4']] as const) {
+    f.state.screens.h1 = [`⏺ ${line}`, rule, '❯ ', rule]
+    await tick([s], f.io, memory, nine + at)
+  }
+  assert.deepEqual(f.sent, [])
+  assert.deepEqual(s.waitNote, { code: 'moving' })
 })
 
 test('a run asked for a result that ends without the line says so in its record', async () => {
@@ -527,7 +574,7 @@ test('a run asked for a result that ends without the line says so in its record'
   await tick([quiet], fakeIo({ live: [term({ lastOutputAt: sentAt + min })] }).io, newMemory(), sentAt + 5 * min)
   assert.deepEqual([quiet.history[0].status, quiet.history[0].note], ['done', { code: 'byScreen', reason: 'noLine' }])
   assert.equal(noteText('en', quiet.history[0].note!), 'by screen: no result line on screen')
-  assert.equal(noteText('ko', quiet.history[0].note!), '화면 기준 화면에 결과 줄이 없음')
+  assert.equal(noteText('ko', quiet.history[0].note!), '화면 기준 · 화면에 결과 줄이 없음')
 
   // Stopped at a question — it has not got to the line yet; nothing is missing.
   const asking = sched({ report: true, sentAt, sawWorking: true })
@@ -540,4 +587,66 @@ test('a run asked for a result that ends without the line says so in its record'
     onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: sentAt + min })
     assert.deepEqual([s.history[0].status, s.history[0].note], ['done', undefined])
   }
+})
+
+test('a result line that comes after the end — the agent waited on its own background work — is taken into the record', async () => {
+  const sentAt = nine
+  const ended = sentAt + 4 * min
+  const record = { at: ended, status: 'done' as const, tookMs: 4 * min, note: { code: 'byScreen' as const, reason: 'noLine' as const } }
+  const late = sched({ report: true, lastStatus: 'done', history: [record, { at: sentAt - 60 * min, status: 'done' }] })
+  // The line is not there yet: the record stays as it is.
+  const f = fakeIo({ live: [term({ lastOutputAt: ended })] })
+  await tick([late], f.io, newMemory(), ended + 30_000)
+  assert.deepEqual(late.history[0], record)
+  f.state.screens.h1 = resultScreen(sentAt, '[result TAG skipped] Nothing changed [link] https://example.com/board [end]')
+  const r = await tick([late], f.io, newMemory(), ended + min)
+  assert.deepEqual(late.history[0], {
+    at: ended,
+    status: 'skipped',
+    tookMs: 4 * min,
+    note: { code: 'byScreen' },
+    summary: 'Nothing changed',
+    link: 'https://example.com/board'
+  })
+  assert.equal(late.lastStatus, 'skipped')
+  assert.equal(late.history.length, 2, 'the same record, not a new one')
+  assert.deepEqual(r.log, ['Morning: result line came after the end'])
+  assert.deepEqual(f.sent, [], 'nothing is sent for it')
+
+  // A failure that comes late is announced like any other.
+  const failed = sched({ report: true, history: [{ at: ended, status: 'done', tookMs: 4 * min, note: { code: 'noLine' } }] })
+  const g = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG failed] The build broke [end]') } })
+  const again = await tick([failed], g.io, newMemory(), ended + min)
+  assert.deepEqual(failed.history[0], { at: ended, status: 'failed', tookMs: 4 * min, summary: 'The build broke' })
+  assert.deepEqual(again.notices, [{ name: 'Morning', status: 'failed', summary: 'The build broke' }])
+})
+
+test('a late result line is taken only for the run it belongs to, and only for a while', async () => {
+  const sentAt = nine
+  const ended = sentAt + 4 * min
+  const noLine = { at: ended, status: 'done' as const, tookMs: 4 * min, note: { code: 'noLine' as const } }
+  const line = (at: number) => resultScreen(at, '[result TAG failed] Not this run [end]')
+  // Another run's line — an earlier one still on screen.
+  const other = sched({ report: true, history: [noLine] })
+  await tick([other], fakeIo({ screens: { h1: line(sentAt - 30 * min) } }).io, newMemory(), ended + min)
+  assert.deepEqual(other.history[0], noLine)
+  // Past the time it is looked for: the terminals are not even listed.
+  const old = sched({ report: true, history: [noLine] })
+  const f = fakeIo({ screens: { h1: line(sentAt) } })
+  let listed = 0
+  const terminals = f.io.terminals
+  f.io.terminals = async () => {
+    listed += 1
+    return terminals()
+  }
+  await tick([old], f.io, newMemory(), ended + limits.lateReportMs)
+  assert.deepEqual([old.history[0], listed], [noLine, 0])
+  // A record that says nothing is missing is left alone, whatever is on screen.
+  const whole = sched({ report: true, history: [{ at: ended, status: 'done', tookMs: 4 * min }] })
+  await tick([whole], fakeIo({ screens: { h1: line(sentAt) } }).io, newMemory(), ended + min)
+  assert.equal(whole.history[0].status, 'done')
+  // Its terminal is closed — nothing to read.
+  const closed = sched({ report: true, history: [noLine] })
+  await tick([closed], fakeIo({ live: [], screens: { h1: line(sentAt) } }).io, newMemory(), ended + min)
+  assert.deepEqual(closed.history[0], noLine)
 })

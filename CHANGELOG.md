@@ -2,6 +2,17 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.10.2 — 2026-11-17
+
+From a day of real use: two runs on a long-lived Claude Code terminal ended late and without their results.
+
+- **A result line ends the run.** The first check that sees the run's line takes it and ends the run. Before, the line was read only once the run had ended some other way — on that terminal no end event came, so the run waited for a quiet screen while its line sat there, and on a small pane later output can push the line off first.
+- **A result line that comes after the end is still taken**, for 60 minutes. An agent that ends its turn to wait for its own background command writes the line when the command is done; by then the run was recorded as `Done · No result line on screen`. The record now takes the line's status, summary and link, and a late Failed is notified.
+- **Quiet means nothing new on screen.** An idle Claude Code repaints its status line every few seconds to minutes: the terminal's last-output time kept moving while the text stayed the same (measured: 7 moves in 4 minutes, no change in the text). "Quiet for a minute" before sending and "quiet for 3 minutes" for an end by screen were met only by chance — one run stayed Running for 17 minutes after its agent had stopped, and another waited to send behind `the screen moved within a minute`. Text unchanged since an earlier check now counts as quiet.
+- A link that Claude Code draws with its mark (`⧉ https://…`) is read; it was dropped.
+- The log says how each run ended: `(agent done)`, `(result line)` or `(by screen)`.
+- Korean: a note with its reason reads `화면 기준 · 화면에 결과 줄이 없음` — the two parts ran together.
+
 ## 0.10.1 — 2026-11-17
 
 - **Send now is one run at a time.** The ▷ on a schedule is off while that schedule waits to send or its run is going, and when its terminal is closed; the tooltip says which. Pressed twice, it used to queue a second send behind the first.

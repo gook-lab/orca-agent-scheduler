@@ -177,6 +177,7 @@ test('a sent run ends when the agent works and stops', async () => {
   const stored = h.data().storage.schedules as Schedule[]
   assert.equal(stored[0].sentAt, null)
   assert.equal(stored[0].history[0].status, 'success')
+  assert.ok(worker.logs.includes('Morning report: success (agent done)'), 'the log says the agent\'s event ended it')
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
 })

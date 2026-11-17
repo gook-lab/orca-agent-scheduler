@@ -825,7 +825,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
   // The list of terminals is read and this one is not in it.
   const gone = live === null && read(terminals) !== null
   // The callout is only for what the count on top and the status bar call "need attention"; a run that
-  // is just waiting its turn gets a grey badge.
+  // is just waiting its turn says so in a line of the card's column.
   const urgent = needsAttention(s)
   const queued = s.pendingSince !== null
   // One run at a time: a second press while one waits or runs would send the prompt again.
@@ -856,8 +856,8 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
     // A filled surface, like a list of cards rather than a form. The border stays: a light theme
     // gives the card surface the panel's own colour, and only the line then shows where a card ends.
     // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.
-    <Box border={saved ? 'success' : true} background={saved ? 'success' : 'card'} radius="lg" padding="sm" gap="xs">
-      <Box direction="row" align="start" gap="sm">
+    <Box border={saved ? 'success' : true} background={saved ? 'success' : 'card'} radius="lg" padding="md" gap="xs">
+      <Box direction="row" align="start" gap="md">
         <Box
           shrink={false}
           radius="full"
@@ -909,6 +909,35 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           ) : last ? (
             <RecordLine r={last} glance={!open} />
           ) : null}
+          {/* Why a run waits, or that its terminal is closed: a line of the same column. The warning
+              below is a block of its own, like the opened part, and keeps the card's whole width. */}
+          {note && urgent ? null : queued ? (
+            // Shown from the press on — the reason arrives with the first check, a moment later.
+            // A word, like the last result above it: a grey badge has the card's own colour in a dark
+            // theme, so only its padding showed — as text that began a little to the right of the name.
+            <Box direction="row" align="start" gap="xs">
+              <Box shrink={false}>
+                <Text size="xs" weight="medium">
+                  {u.waitingToSend}
+                </Text>
+              </Box>
+              {note ? (
+                <Box grow shrink minWidth={0}>
+                  <Text size="xs" muted>
+                    {soft(noteText(l, note))}
+                  </Text>
+                </Box>
+              ) : null}
+            </Box>
+          ) : gone ? (
+            // A schedule that is on will find no terminal at its next time; one that is off only says so.
+            <Box gap="xs">
+              <Text size="xs" tone={s.enabled ? 'warning' : undefined} muted={!s.enabled}>
+                {u.terminalGone}
+              </Text>
+              <Row>{fixButton}</Row>
+            </Box>
+          ) : null}
         </Box>
       </Box>
       {note && urgent ? (
@@ -918,26 +947,6 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
             {fixButton ? <Row>{fixButton}</Row> : null}
           </Stack>
         </Callout>
-      ) : queued ? (
-        // Shown from the press on — the reason arrives with the first check, a moment later.
-        <Box direction="row" align="start" gap="xs">
-          <Badge>{u.waitingToSend}</Badge>
-          {note ? (
-            <Box grow shrink minWidth={0}>
-              <Text size="xs" muted>
-                {soft(noteText(l, note))}
-              </Text>
-            </Box>
-          ) : null}
-        </Box>
-      ) : gone ? (
-        // A schedule that is on will find no terminal at its next time; one that is off only says so.
-        <Stack gap="xs">
-          <Text size="xs" tone={s.enabled ? 'warning' : undefined} muted={!s.enabled}>
-            {u.terminalGone}
-          </Text>
-          <Row>{fixButton}</Row>
-        </Stack>
       ) : null}
       {open ? (
         <Stack gap="xs">
@@ -1112,7 +1121,8 @@ function TerminalBlock({ g }: { g: Group }) {
         </Box>
       ) : null}
       {open ? (
-        <Stack gap="xs">
+        // Cards stand a little apart from each other, and closer to the terminal line they belong to.
+        <Stack gap="sm">
           {g.recurring.map((s) => (
             <ScheduleRow s={s} live={g.live} />
           ))}

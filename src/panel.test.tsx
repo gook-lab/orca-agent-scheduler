@@ -319,6 +319,16 @@ test('a card starts with a round mark: what is going on now, else how the last r
   assert.ok(texts(withRun.children?.[2]).includes(failed), 'the last run is the third line of the same column')
   const [, going] = await draw({ ...ran('failed'), sentAt: Date.now() })
   assert.equal(count(going.children?.[2], 'Spinner'), 1, 'a run that is going takes that line')
+  // Why a run waits, and that its terminal is closed, are lines of that column too. What a person must
+  // deal with is a block of its own under it, the card's whole width.
+  const [, waiting] = await draw({ ...ran('success'), pendingSince: Date.now(), waitNote: { code: 'moving' } })
+  assert.ok(texts(waiting).includes('Waiting to send'), 'that a run waits starts at the same edge as the name')
+  assert.equal(count(waiting, 'Badge'), 0, 'as a word: a grey badge is the colour of the card in a dark theme')
+  const [, closed] = await draw({ ...ran('success'), terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } })
+  assert.ok(texts(closed).some((line) => /This terminal is closed/.test(line)))
+  const [, urgent] = await draw({ ...ran('success'), pendingSince: Date.now() - 60_000, waitNote: { code: 'typing' } })
+  assert.equal(count(urgent, 'Callout'), 0, 'the warning keeps the whole width')
+  assert.ok(titled(view, 'Callout', 'Check'))
 
   // Folded: the mark has the colour, so the result is a word. Opened: the badge, with what the agent wrote.
   await draw(ran('failed'))
@@ -356,7 +366,7 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   }
   const gone: Schedule = { ...blankSchedule('s2'), name: 'Old', terminal: { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, prompt: 'x' }
   await view.post('schedules.changed', { schedules: [running, gone] })
-  assert.ok(view.find({ type: 'Badge', text: 'Waiting to send' }))
+  assert.ok(view.find({ type: 'Text', text: 'Waiting to send' }))
   assert.equal(view.find({ text: 'Screen changed in the last minute (working or typing)' })?.props.muted, true, 'an ordinary wait stays grey')
   assert.ok(view.find({ text: /This terminal is closed/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
@@ -561,7 +571,7 @@ test('Send now is for a schedule at rest — off while one waits or runs, or its
       [true, 'This terminal is closed — nothing can be sent to it']
     ]
   )
-  assert.ok(view.find({ type: 'Badge', text: 'Waiting to send' }), 'a press shows at once, before the first check gives a reason')
+  assert.ok(view.find({ type: 'Text', text: 'Waiting to send' }), 'a press shows at once, before the first check gives a reason')
   await view.press(play[0])
   assert.deepEqual(ran, ['s1'])
   await view.unmount()

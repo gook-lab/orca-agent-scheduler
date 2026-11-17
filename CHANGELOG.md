@@ -2,6 +2,17 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.2 — 2026-11-17
+
+Room between the cards and inside them.
+
+- **Cards stand apart.** They were 4 px from each other and read as one block; now 8 px, and still 4 px from the terminal line they belong to.
+- **Room inside a card.** 12 px around its content instead of 8, and 12 px between the round mark and the text — the mark and the first letters sat close to the line around the card. A folded card is 86 px (78 in 0.12.1), one that has not run yet 70 px (62). At 280 px the name has 12 px less, so a long one wraps.
+- **Why a run waits, and that its terminal is closed, start at the same edge as the name.** `Waiting to send` with its reason and the closed-terminal line with **Pick a terminal** were the last lines that began under the mark. `Waiting to send` is a word now, not a grey badge — in a dark theme that badge has the card's own colour, so only its padding showed. The orange warning stays a block of its own, the card's whole width.
+- The heights given for 0.12.1 below were 4 px short — measured again from line to line: 78 and 62 px, after 94 in 0.12.0.
+
+Checked on the real panel at 280 and 457 px — the waiting line by its tests only, as it shows just while a run waits. The pictures in the README are still those of 0.12.1.
+
 ## 0.12.1 — 2026-11-17
 
 The card from 0.12.0, tidied — on the real panel it looked off in three places.
@@ -9,7 +20,7 @@ The card from 0.12.0, tidied — on the real panel it looked off in three places
 - **Every line of a card starts at the same edge.** The name and the next run began beside the round mark while the last result began under it, at the card's left, so the mark looked like it floated on its own. The last result is now the third line of the same column.
 - **A schedule that has not run yet is two lines.** Its card kept a line that held nothing but the two buttons. Send now (▷) and open (⌄) sit beside the next run again, as they did before 0.12.0.
 - **A grey mark is a circle again.** A neutral fill is the card's own colour, so "not run yet", "waiting to send" and "off" showed a glyph with no circle around it. They have a line around them now, and off is an empty circle — the `Off` under the name says the rest.
-- Cards are lower: about 74 px folded (90 in 0.12.0) and 58 px for a schedule that has not run yet (90) — lower than in 0.11.2 too (91 and 65). At 280 px the next run wraps to a second line beside the buttons, and a name that broke in two fits on one. Checked on the real panel at 280 and 457 px, and in both themes with the scenarios.
+- Cards are lower: 78 px folded (94 in 0.12.0) and 62 px for a schedule that has not run yet (94) — lower than in 0.11.2 too (91 and 65). At 280 px the next run wraps to a second line beside the buttons, and a name that broke in two fits on one. Checked on the real panel at 280 and 457 px, and in both themes with the scenarios.
 
 ## 0.12.0 — 2026-11-17
 

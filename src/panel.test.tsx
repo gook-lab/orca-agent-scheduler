@@ -255,34 +255,73 @@ test('on top: how many are on and ran today, in words; badges only for waiting, 
 test('a card starts with a round mark: what is going on now, else how the last run went; folded, the result is a word', async () => {
   const view = await mount(panel, { host: host() })
   type Last = NonNullable<Schedule['lastStatus']>
+  type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
   const ran = (status: Last): Partial<Schedule> => ({ lastStatus: status, history: [{ at: Date.now() - 60_000, status, tookMs: 60_000 }] })
-  const mark = async (over: Partial<Schedule>): Promise<[string, unknown][]> => {
+  const texts = (node: unknown): string[] => (typeof node === 'string' ? [node] : ((node as Node | null)?.children ?? []).flatMap(texts))
+  const count = (node: unknown, type: string): number =>
+    !node || typeof node !== 'object' ? 0 : ((node as Node).type === type ? 1 : 0) + ((node as Node).children ?? []).reduce((n: number, c) => n + count(c, type), 0)
+  // The row a card starts with: the round mark, then the column beside it.
+  const head = (node: unknown): [Node, Node] | null => {
+    if (!node || typeof node !== 'object') return null
+    const children = (node as Node).children ?? []
+    const first = children[0] as Node | undefined
+    if (first && typeof first === 'object' && first.props?.radius === 'full') return [first, children[1] as Node]
+    for (const child of children) {
+      const found = head(child)
+      if (found) return found
+    }
+    return null
+  }
+  const draw = async (over: Partial<Schedule>): Promise<[Node, Node]> => {
     await view.post('schedules.changed', {
       schedules: [{ ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] }, nextRunAt: at(9, 0, 1), ...over }]
     })
-    return view.findAll({ type: 'Text', text: /^[•✓✕–?○▸!…]$/ }).map((e) => [e.text, e.props.tone])
+    const found = head(view.tree())
+    assert.ok(found, 'the card starts with its mark')
+    return found
   }
-  assert.deepEqual(await mark({}), [['•', 'neutral']], 'no run yet')
-  assert.deepEqual(await mark(ran('success')), [['✓', 'success']])
-  assert.deepEqual(await mark(ran('done')), [['✓', 'success']], 'ended without a result line — still a finished run')
-  assert.deepEqual(await mark(ran('failed')), [['✕', 'danger']])
-  assert.deepEqual(await mark(ran('skipped')), [['–', 'warning']])
-  assert.deepEqual(await mark(ran('doneWaiting')), [['?', 'warning']], 'stopped at a question')
+  // The glyph, the colour, and whether the circle has a line: a neutral fill is the card's own colour.
+  const mark = async (over: Partial<Schedule>): Promise<unknown[]> => {
+    const [circle] = await draw(over)
+    return [texts(circle).join(''), circle.props?.background, circle.props?.border === true]
+  }
+  assert.deepEqual(await mark({}), ['•', 'neutral', true], 'no run yet')
+  assert.deepEqual(await mark(ran('success')), ['✓', 'success', false])
+  assert.deepEqual(await mark(ran('done')), ['✓', 'success', false], 'ended without a result line — still a finished run')
+  assert.deepEqual(await mark(ran('failed')), ['✕', 'danger', false])
+  assert.deepEqual(await mark(ran('skipped')), ['–', 'warning', false])
+  assert.deepEqual(await mark(ran('doneWaiting')), ['?', 'warning', false], 'stopped at a question')
   // What is going on now comes before the last result.
-  assert.deepEqual(await mark({ ...ran('failed'), sentAt: Date.now() }), [['▸', 'accent']], 'running')
-  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() - 60_000, waitNote: { code: 'typing' } }), [['!', 'warning']], 'a person must act')
-  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() }), [['…', 'neutral']], 'waiting its turn')
-  assert.deepEqual(await mark({ ...ran('success'), terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }), [['!', 'warning']], 'on, and its terminal is closed')
-  assert.deepEqual(await mark({ ...ran('failed'), enabled: false }), [['○', 'neutral']], 'off says only that')
+  assert.deepEqual(await mark({ ...ran('failed'), sentAt: Date.now() }), ['▸', 'accent', false], 'running')
+  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() - 60_000, waitNote: { code: 'typing' } }), ['!', 'warning', false], 'a person must act')
+  assert.deepEqual(await mark({ ...ran('success'), pendingSince: Date.now() }), ['…', 'neutral', true], 'waiting its turn')
+  assert.deepEqual(
+    await mark({ ...ran('success'), terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }),
+    ['!', 'warning', false],
+    'on, and its terminal is closed'
+  )
+  assert.deepEqual(await mark({ ...ran('failed'), enabled: false }), ['', 'neutral', true], 'off says only that: an empty circle')
   assert.deepEqual(
     await mark({ ...ran('failed'), enabled: false, terminal: { ...open[0], handle: 'h-gone', leafId: 'l-gone' } }),
-    [['○', 'neutral']],
+    ['', 'neutral', true],
     'off with a closed terminal is still just off'
   )
 
-  // Folded: the mark has the colour, so the result is a word. Opened: the badge, with what the agent wrote.
-  await mark(ran('failed'))
+  // One column beside the mark, so every line starts at the same edge: the name with its switch, the
+  // next run with the two buttons, then the last run. Not run yet, a card ends after two lines.
   const failed = statusText('en', 'failed')
+  const [, fresh] = await draw({})
+  assert.equal(fresh.children?.length, 2, 'not run yet: no line kept empty for the buttons')
+  assert.equal(count(fresh.children?.[0], 'Switch'), 1)
+  assert.equal(count(fresh.children?.[1], 'IconButton'), 2, 'send now and open sit beside the next run')
+  const [, withRun] = await draw(ran('failed'))
+  assert.equal(withRun.children?.length, 3)
+  assert.ok(texts(withRun.children?.[2]).includes(failed), 'the last run is the third line of the same column')
+  const [, going] = await draw({ ...ran('failed'), sentAt: Date.now() })
+  assert.equal(count(going.children?.[2], 'Spinner'), 1, 'a run that is going takes that line')
+
+  // Folded: the mark has the colour, so the result is a word. Opened: the badge, with what the agent wrote.
+  await draw(ran('failed'))
   assert.equal(view.find({ type: 'Badge', text: failed }), null, 'no badge beside the mark')
   assert.equal(view.find({ type: 'Text', text: failed })?.props.tone, 'danger')
   await unfold(view)
@@ -293,7 +332,7 @@ test('a card starts with a round mark: what is going on now, else how the last r
   const lines: unknown[] = []
   const walk = (node: unknown): void => {
     if (!node || typeof node !== 'object') return
-    const { props, children } = node as { props?: Record<string, unknown>; children?: unknown[] }
+    const { props, children } = node as Node
     if (props?.background === 'card') lines.push(props.border)
     children?.forEach(walk)
   }

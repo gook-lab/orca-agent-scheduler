@@ -504,7 +504,7 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
           : 'neutral'
 
 /** The round mark at a card's left — what a glance takes in first. What is going on now comes before how
- *  the last run went, and a schedule that is off says only that. */
+ *  the last run went, and a schedule that is off says only that: an empty circle. */
 const markOf = (
   s: Schedule,
   now: { urgent: boolean; queued: boolean; gone: boolean }
@@ -512,7 +512,7 @@ const markOf = (
   if (s.sentAt !== null) return { tone: 'accent', glyph: '▸' }
   if (now.urgent || (now.gone && s.enabled)) return { tone: 'warning', glyph: '!' }
   if (now.queued) return { tone: 'neutral', glyph: '…' }
-  if (!s.enabled) return { tone: 'neutral', glyph: '○' }
+  if (!s.enabled) return { tone: 'neutral', glyph: '' }
   const last = s.history[0]
   if (!last) return { tone: 'neutral', glyph: '•' }
   const tone = statusTone(last.status)
@@ -856,23 +856,51 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
     // A filled surface, like a list of cards rather than a form. The border stays: a light theme
     // gives the card surface the panel's own colour, and only the line then shows where a card ends.
     // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.
-    <Box border={saved ? 'success' : true} background={saved ? 'success' : 'card'} radius="lg" padding="md" gap="sm">
-      <Box direction="row" align="center" gap="sm">
-        <Box shrink={false} radius="full" background={mark.tone} width={28} height={28} align="center" justify="center">
-          <Text size="sm" weight="semibold" tone={mark.tone}>
-            {mark.glyph}
-          </Text>
+    <Box border={saved ? 'success' : true} background={saved ? 'success' : 'card'} radius="lg" padding="sm" gap="xs">
+      <Box direction="row" align="start" gap="sm">
+        <Box
+          shrink={false}
+          radius="full"
+          // A neutral fill is the card's own colour: without the line the circle is not there.
+          border={mark.tone === 'neutral'}
+          background={mark.tone}
+          width={28}
+          height={28}
+          align="center"
+          justify="center"
+        >
+          {mark.glyph ? (
+            <Text size="sm" weight="semibold" tone={mark.tone}>
+              {mark.glyph}
+            </Text>
+          ) : null}
         </Box>
-        {/* The name shares its row with the switch only — next to the buttons a long name broke a word per line. */}
+        {/* One column beside the mark, so every line of text starts at the same edge: the name with its
+            switch, the next run with the two buttons, then the last run — a schedule that has not run
+            yet ends after two lines instead of keeping an empty one for the buttons. */}
         <Box grow shrink minWidth={0}>
           <Switch label={soft(s.name)} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
-          <Text size="xs" muted>
-            {nextText}
-          </Text>
-        </Box>
-      </Box>
-      <Box direction="row" align="center" gap="xs">
-        <Box grow shrink minWidth={0}>
+          <Box direction="row" align="center" gap="xs">
+            <Box grow shrink minWidth={0}>
+              <Text size="xs" muted>
+                {nextText}
+              </Text>
+            </Box>
+            <Box shrink={false}>
+              <Toolbar label={s.name} gap="none">
+                <IconButton
+                  icon="play"
+                  size="xs"
+                  variant="ghost"
+                  label={u.sendNow}
+                  tooltip={sendBlock ?? u.sendNowTip}
+                  disabled={sendBlock !== null}
+                  onPress={() => void plugin.request('schedules.runNow', { id: s.id })}
+                />
+                <IconButton icon={open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={open ? u.less : u.more} onPress={() => toggleCard(s.id)} />
+              </Toolbar>
+            </Box>
+          </Box>
           {s.sentAt !== null ? (
             <Row gap="xs">
               <Spinner label={u.running} labelHidden />
@@ -881,20 +909,6 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           ) : last ? (
             <RecordLine r={last} glance={!open} />
           ) : null}
-        </Box>
-        <Box shrink={false}>
-          <Toolbar label={s.name} gap="none">
-            <IconButton
-              icon="play"
-              size="xs"
-              variant="ghost"
-              label={u.sendNow}
-              tooltip={sendBlock ?? u.sendNowTip}
-              disabled={sendBlock !== null}
-              onPress={() => void plugin.request('schedules.runNow', { id: s.id })}
-            />
-            <IconButton icon={open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={open ? u.less : u.more} onPress={() => toggleCard(s.id)} />
-          </Toolbar>
         </Box>
       </Box>
       {note && urgent ? (

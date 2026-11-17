@@ -36,7 +36,7 @@ function host(storage: Record<string, unknown> = {}) {
     storage: storage as never,
     results: {
       'workspace.list': {
-        workspaces: [{ id: 'w1', kind: 'worktree', name: 'sonix_docs', path: '/repo/docs', branch: 'main', hostId: null }],
+        workspaces: [{ id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/repo/docs', branch: 'main', hostId: null }],
         truncated: false
       },
       'terminal.read': { lines: idle, truncated: false },
@@ -46,7 +46,7 @@ function host(storage: Record<string, unknown> = {}) {
   })
 }
 
-const terminal = { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'sonix_docs', tabId: 't1', leafId: 'l1' }
+const terminal = { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: 't1', leafId: 'l1' }
 const draft = { name: 'Morning report', terminal, cron: '0 9 * * 1-5', prompt: 'Plan the day', enabled: true, clearFirst: false }
 const settle = () => new Promise((r) => setTimeout(r, 50))
 
@@ -115,7 +115,7 @@ test('the panel gets the agent terminals of every workspace — no shells, works
   assert.deepEqual(
     list.map((t) => [t.handle, t.agent, t.title, t.workspace]),
     [
-      ['h1', 'claude', 'Morning', 'sonix_docs'],
+      ['h1', 'claude', 'Morning', 'acme_notes'],
       ['h2', 'codex', 'Review', 'toy']
     ]
   )

@@ -17,7 +17,7 @@ const codexIdle = [
   '  Worked for 3s • 2:28 PM',
   '  ↳ Recap: 완료했습니다.',
   '› Ask Codex to do anything',
-  '  GPT-6.1-Sol low · ~/sonix/toy · 토이 섹션 교차 검토',
+  '  GPT-6.1-Sol low · ~/code/toy · 토이 섹션 교차 검토',
   '  ? for shortcuts                                         ⚠ 1 warning · f2 to view',
   ''
 ]

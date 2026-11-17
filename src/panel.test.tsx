@@ -6,7 +6,7 @@ import { words } from './i18n'
 import * as panel from './panel'
 
 const open: TerminalOption[] = [
-  { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'sonix_docs', tabId: 't1', leafId: 'l1' },
+  { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: 't1', leafId: 'l1' },
   { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'w2', workspace: 'toy', tabId: 't2', leafId: 'l2' }
 ]
 
@@ -240,7 +240,7 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   assert.equal(view.find({ text: 'Spare 6' }), null, 'terminals without schedules are on the other tab')
   assert.ok(view.find({ type: 'Tab', label: 'Schedules 2' }))
   await view.select({ type: 'Tabs' }, 'terminals')
-  assert.equal(view.findAll({ type: 'Text', text: 'sonix_docs' }).length, 5, 'h1 and the four spares')
+  assert.equal(view.findAll({ type: 'Text', text: 'acme_notes' }).length, 5, 'h1 and the four spares')
   assert.equal(view.find({ label: 'Codex — Show this terminal in Orca' })?.props.disabled, false, 'h2 is open')
   assert.deepEqual(
     view.findAll({ type: 'Text', text: /^(✳|>_)$/ }).map((e) => e.text),
@@ -272,10 +272,10 @@ test('search filters both tabs — by terminal, workspace, agent or schedule nam
   assert.ok(view.find({ label: 'Nothing matches “nothing here”' }), 'the same search on Terminals')
   await view.press({ text: 'Clear search' })
   assert.equal(view.find({ label: 'Find' })?.props.value, '', 'the way out is right there')
-  assert.ok(view.find({ type: 'Text', text: 'sonix_docs' }))
+  assert.ok(view.find({ type: 'Text', text: 'acme_notes' }))
   await view.type({ label: 'Find' }, 'toy', { replace: true })
   assert.ok(view.find({ type: 'Text', text: 'toy' }))
-  assert.equal(view.find({ type: 'Text', text: 'sonix_docs' }), null)
+  assert.equal(view.find({ type: 'Text', text: 'acme_notes' }), null)
   await view.unmount()
 })
 
@@ -297,9 +297,9 @@ test('↗ shows the terminal in Orca; pressing a block name only folds it', asyn
   const view = await mount(panel, { host: host({ focused }) })
   const s: Schedule = { ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] } }
   await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ type: 'Button', text: 'sonix_docs' })
+  await view.press({ type: 'Button', text: 'acme_notes' })
   assert.equal(view.find({ label: 'Morning report' }), null, 'folded')
-  await view.press({ type: 'Button', text: 'sonix_docs' })
+  await view.press({ type: 'Button', text: 'acme_notes' })
   assert.ok(view.find({ label: 'Morning report' }), 'open again')
   assert.deepEqual(focused, [], 'Orca was not moved')
   await view.select({ type: 'Tabs' }, 'terminals')
@@ -380,7 +380,7 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   await view.post('schedules.changed', { schedules: [] })
   assert.equal(view.find({ label: 'No schedules yet' }), null, 'the block stays while Undo is offered')
   assert.ok(view.find({ text: 'Deleted “Release”' }), 'Undo where the schedule was, under its terminal')
-  assert.ok(view.find({ type: 'Button', text: 'sonix_docs' }))
+  assert.ok(view.find({ type: 'Button', text: 'acme_notes' }))
   await view.press({ text: 'Undo' })
   assert.equal(restored[0].id, 's1')
   assert.equal(view.find({ text: 'Deleted “Release”' }), null)
@@ -683,7 +683,7 @@ test('a run being sent spins; before the first answer both tabs show a placehold
   assert.deepEqual(tabs(), ['Schedules', 'Terminals'], 'no 0 while reading — it would read as none')
   assert.equal(early.find({ label: 'No schedules yet' }), null)
   await early.select({ type: 'Tabs' }, 'terminals')
-  assert.ok(early.find({ type: 'Text', text: 'sonix_docs' }), 'entering Terminals reads the list itself')
+  assert.ok(early.find({ type: 'Text', text: 'acme_notes' }), 'entering Terminals reads the list itself')
   assert.deepEqual(tabs(), ['Schedules', `Terminals ${open.length}`], 'the number comes with the answer')
   await early.unmount()
 })

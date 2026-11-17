@@ -28,7 +28,7 @@ const base = {
 const results = {
   'workspace.list': {
     workspaces: [
-      { id: 'sonix_docs', kind: 'worktree', name: 'sonix_docs', path: '/repo/docs', branch: 'main', hostId: null },
+      { id: 'acme_notes', kind: 'worktree', name: 'acme_notes', path: '/repo/docs', branch: 'main', hostId: null },
       { id: 'notes', kind: 'folder', name: 'notes', path: '/notes', branch: null, hostId: null }
     ],
     truncated: false
@@ -42,7 +42,7 @@ const schedules = [
     ...base,
     id: 's1',
     name: 'Morning report',
-    terminal: terminal('h1', 'Morning', 'claude', 'sonix_docs'),
+    terminal: terminal('h1', 'Morning', 'claude', 'acme_notes'),
     cron: '0 9 * * 1-5',
     nextRunAt: now + 3 * 3600_000,
     lastStatus: 'done',
@@ -52,7 +52,7 @@ const schedules = [
     ...base,
     id: 's2',
     name: 'PR review',
-    terminal: terminal('h2', 'Review', 'codex', 'sonix_docs'),
+    terminal: terminal('h2', 'Review', 'codex', 'acme_notes'),
     cron: '*/30 9-17 * * 1-5; 0 18 * * 1-5',
     nextRunAt: now + 20 * 60_000,
     sentAt: now - 20 * 60_000,
@@ -75,7 +75,7 @@ const schedules = [
     id: 'o1',
     once: true,
     name: 'Summarise the open PRs',
-    terminal: terminal('h1', 'Morning', 'claude', 'sonix_docs'),
+    terminal: terminal('h1', 'Morning', 'claude', 'acme_notes'),
     cron: '',
     nextRunAt: null,
     lastStatus: 'done',

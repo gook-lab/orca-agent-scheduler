@@ -405,6 +405,7 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   await view.press({ label: 'Delete' })
   await view.press({ type: 'Button', text: 'Delete' })
   assert.deepEqual(deleted, ['s1'])
+  assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'the question goes with the press — it does not wait for the worker to answer')
   await view.post('schedules.changed', { schedules: [] })
   assert.equal(view.find({ label: 'No schedules yet' }), null, 'the block stays while Undo is offered')
   assert.ok(view.find({ text: 'Deleted “Release”' }), 'Undo where the schedule was, under its terminal')

@@ -370,9 +370,9 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   assert.equal(view.find({ text: 'Screen changed in the last minute (working or typing)' })?.props.muted, true, 'an ordinary wait stays grey')
   assert.ok(view.find({ text: /This terminal is closed/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
-  assert.ok(view.find({ text: 'Done' }))
-  assert.ok(view.find({ text: / · took 3 min$/ }), 'folded: when the last run was and how long it took')
-  assert.equal(view.find({ text: /sent 6 h 2 min late/ }), null, 'how late it went out opens with the card')
+  assert.equal(view.find({ text: 'Done' }), null, 'folded: the run that waits takes the place of the one before it')
+  assert.equal(view.find({ text: / · took 3 min$/ }), null)
+  assert.equal(view.find({ text: /sent 6 h 2 min late/ }), null, 'which opens with the card, with how late it went out')
   await view.press(view.findAll({ type: 'IconButton', label: 'More' })[0])
   const record = view.find({ text: /sent 6 h 2 min late · took 3 min/ })
   assert.ok(record, 'caught up after its time — the record says how late')
@@ -1422,5 +1422,46 @@ test('a folded card says why the last run did not go well — one line of what t
   }
   assert.equal(shown('said success').length, 1, 'opened: what the agent wrote, as before')
   assert.equal(cut(), without, 'nothing is cut in an opened card')
+  await view.unmount()
+})
+
+test('while a run waits to be sent, a folded card says that in place of the last run — which opens with the card', async () => {
+  const view = await mount(panel, { host: host() })
+  const why = 'The server did not answer'
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'Board check',
+    terminal: { ...open[0] },
+    prompt: 'x',
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: 'failed',
+    history: [{ at: Date.now() - 3600_000, status: 'failed', tookMs: 33 * 60_000, summary: why }]
+  }
+  const draw = (over: Partial<Schedule> = {}): Promise<void> => view.post('schedules.changed', { schedules: [{ ...s, ...over }] })
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  const failed = statusText('en', 'failed')
+  // The last run on a folded card: its result as a word, when and how long, and why.
+  const lastRun = (): boolean[] => [texts().includes(failed), texts().some((x) => x.endsWith('took 33 min')), texts().includes(why)]
+  const waits = (): boolean => texts().includes('Waiting to send')
+
+  await draw()
+  assert.deepEqual([...lastRun(), waits()], [true, true, true, false], 'at rest: how the last run went, and why')
+
+  await draw({ pendingSince: Date.now(), waitNote: { code: 'busy' } })
+  assert.deepEqual([...lastRun(), waits()], [false, false, false, true], 'a run waits its turn: that, and not the one before it')
+
+  await draw({ pendingSince: Date.now() - 60_000, waitNote: { code: 'typing' } })
+  assert.ok(titled(view, 'Callout', 'Check'), 'a person must act: the warning')
+  assert.deepEqual(lastRun(), [false, false, false], 'and not the run before it either')
+
+  await draw({ pendingSince: Date.now(), waitNote: { code: 'busy' } })
+  await unfold(view)
+  assert.ok(view.find({ type: 'Badge', text: failed }) && texts().includes(why), 'opened: the last run, whole')
+  assert.ok(waits(), 'and that one waits')
+
+  await view.press({ type: 'IconButton', label: 'Less' })
+  assert.deepEqual([...lastRun(), waits()], [false, false, false, true], 'folded again')
+  await draw()
+  assert.deepEqual([...lastRun(), waits()], [true, true, true, false], 'the wait over, the last run is back')
   await view.unmount()
 })

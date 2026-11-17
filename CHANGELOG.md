@@ -2,6 +2,16 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.4 — 2026-11-18
+
+A folded card says one thing about its runs at a time.
+
+- **While a run waits to be sent, the card says that in place of the last run.** A schedule whose last run failed, with the next one waiting its turn, stacked four lines under its name: the next time, `Failed … · took 33 min`, why, and `Waiting to send` with its reason — 118 px at 380 px wide, where other cards are 86. A run that is going already took the last run's line; one that waits does now too, and that card is 86 px. The run before it, and why it failed, open with the card; when the wait ends the line is the spinner, then the new result.
+- The same when the wait needs a person: the orange warning, without the last run above it.
+- A card with no run waiting is as in 0.12.3 — a failed run keeps its line of why.
+
+Drawn on the real panel at 280 and 380 px before it was built, beside a version that also moved the reason onto the result's own line: every card two lines under its name, but at 280 px eight characters of the reason were left. The pictures in the README are still those of 0.12.1.
+
 ## 0.12.3 — 2026-11-17
 
 A folded card says why a run did not go well.

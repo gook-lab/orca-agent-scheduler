@@ -868,7 +868,8 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
   const mark = markOf(s, { urgent, queued, gone })
   return (
     // Folded, a card says what a glance is for: which schedule, when it runs next, how the last run
-    // went — and why, in one line, when it did not go well. The whole of what the agent wrote, the
+    // went — and why, in one line, when it did not go well — or, in that run's place, that one is
+    // going or waits to be sent. The whole of what the agent wrote, the
     // rule, the prompt, the history and what is done now and then — edit, duplicate, delete — open
     // in place: Orca's panel kit has no menu that pops up.
     // A filled surface, like a list of cards rather than a form. The border stays: a light theme
@@ -919,12 +920,15 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
               </Toolbar>
             </Box>
           </Box>
+          {/* What is going on now takes the last run's place on a folded card — the spinner while a run
+              is going, the waiting line below while one waits: the result it is about to replace opens
+              with the card. */}
           {s.sentAt !== null ? (
             <Row gap="xs">
               <Spinner label={u.running} labelHidden />
               <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
             </Row>
-          ) : last ? (
+          ) : last && (open || !queued) ? (
             <RecordLine r={last} glance={!open} />
           ) : null}
           {/* Why a run waits, or that its terminal is closed: a line of the same column. The warning

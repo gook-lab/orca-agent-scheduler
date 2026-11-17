@@ -2,7 +2,7 @@
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
 import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
-import { words } from './i18n'
+import { whenText, words } from './i18n'
 import * as panel from './panel'
 import { zoneText } from './timespec'
 
@@ -74,6 +74,14 @@ async function fillBasics(view: Awaited<ReturnType<typeof mount>>) {
 /** A Callout or Collapsible by its title — titles are props, not query fields. */
 const titled = (view: Awaited<ReturnType<typeof mount>>, type: string, title: string) =>
   view.findAll({ type }).find((e) => e.props.title === title) ?? null
+
+type View = Awaited<ReturnType<typeof mount>>
+/** Opens every folded card — its rule, prompt, history, and Edit · Duplicate · Delete. */
+async function unfold(view: View): Promise<void> {
+  for (let more = view.find({ type: 'IconButton', label: 'More' }); more; more = view.find({ type: 'IconButton', label: 'More' })) await view.press(more)
+}
+/** Presses Edit, Duplicate or Delete on the nth card that shows it. */
+const act = (view: View, text: 'Edit' | 'Duplicate' | 'Delete', nth = 0): Promise<void> => view.press(view.findAll({ type: 'Button', text })[nth])
 
 const at = (h: number, m = 0, dayOffset = 0): number => {
   const d = new Date()
@@ -255,8 +263,12 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   assert.ok(view.find({ text: /This terminal is closed/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
   assert.ok(view.find({ text: 'Done' }))
+  assert.ok(view.find({ text: / · took 3 min$/ }), 'folded: when the last run was and how long it took')
+  assert.equal(view.find({ text: /sent 6 h 2 min late/ }), null, 'how late it went out opens with the card')
+  await view.press(view.findAll({ type: 'IconButton', label: 'More' })[0])
   const record = view.find({ text: /sent 6 h 2 min late · took 3 min/ })
   assert.ok(record, 'caught up after its time — the record says how late')
+  assert.equal(titled(view, 'Collapsible', 'History (1)'), null, 'one run is the line in sight — no History of one')
   assert.notEqual(record.props.truncate, true, 'and wraps rather than losing its end at 360px')
   assert.equal(view.find({ label: 'Codex — Show this terminal in Orca' })?.props.disabled, true, 'a closed terminal cannot be shown')
   assert.equal(view.find({ text: 'Spare 6' }), null, 'terminals without schedules are on the other tab')
@@ -392,18 +404,21 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   const view = await mount(panel, { host: host({ saved, deleted, restored }) })
   const s: Schedule = { ...blankSchedule('s1'), name: 'Release', terminal: { ...open[0] }, cron: '0 9 * * 1-5', prompt: 'Ship it' }
   await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ label: 'Duplicate' })
+  assert.equal(view.find({ type: 'Button', text: 'Duplicate' }), null, 'folded: what is done now and then stays out of the way')
+  await unfold(view)
+  await act(view, 'Duplicate')
   assert.equal(view.find({ label: 'Name' })?.props.value, 'Release copy')
   await view.press({ text: 'Create schedule' })
   assert.equal('id' in saved[0], false, 'saved as a new schedule')
   assert.equal(saved[0].prompt, 'Ship it')
-  await view.press({ label: 'Delete' })
+  await act(view, 'Delete')
   assert.deepEqual(deleted, [], 'asked first')
   assert.ok(titled(view, 'Callout', 'Delete “Release”?'))
+  assert.equal(view.findAll({ type: 'Button', text: 'Delete' }).length, 1, 'the question takes the buttons\' place — one Delete to press')
   await view.press({ type: 'Button', text: 'Cancel' })
   assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null)
-  await view.press({ label: 'Delete' })
-  await view.press({ type: 'Button', text: 'Delete' })
+  await act(view, 'Delete')
+  await act(view, 'Delete')
   assert.deepEqual(deleted, ['s1'])
   assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'the question goes with the press — it does not wait for the worker to answer')
   await view.post('schedules.changed', { schedules: [] })
@@ -507,18 +522,23 @@ test('deleting a schedule says what goes with it', async () => {
   }
   const other: Schedule = { ...blankSchedule('s2'), name: 'Other', terminal: { ...open[0] } }
   await view.post('schedules.changed', { schedules: [s, other] })
-  const bins = view.findAll({ type: 'IconButton', label: 'Delete' })
-  await view.press(bins[0])
+  await unfold(view)
+  await act(view, 'Delete', 0)
   assert.ok(view.find({ text: 'Its 2 past results go with it.' }))
-  await view.press(bins[1])
+  // Release now shows its question's Delete; Other's own is the second.
+  await act(view, 'Delete', 1)
   assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'one question at a time')
   assert.ok(titled(view, 'Callout', 'Delete “Other”?'))
   assert.equal(view.find({ text: /past result/ }), null, 'nothing to lose, nothing said')
   assert.deepEqual(deleted, [])
-  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[1])
+  await act(view, 'Edit')
   await view.press({ type: 'IconButton', label: 'Close' })
   assert.equal(titled(view, 'Callout', 'Delete “Other”?'), null, 'the question does not wait behind the form')
-  await view.press(view.findAll({ type: 'IconButton', label: 'Delete' })[0])
+  await act(view, 'Delete', 1)
+  await view.press(view.findAll({ type: 'IconButton', label: 'Less' })[1])
+  await unfold(view)
+  assert.equal(titled(view, 'Callout', 'Delete “Other”?'), null, 'nor inside a card that was folded')
+  await act(view, 'Delete', 0)
   await view.post('schedules.changed', { schedules: [other] })
   await view.post('schedules.changed', { schedules: [s, other] })
   assert.equal(titled(view, 'Callout', 'Delete “Release”?'), null, 'nor come back with a schedule that left the list and returned')
@@ -531,7 +551,8 @@ test('editing a schedule on a closed terminal keeps that terminal first, marked 
   const gone = { ...open[0], handle: 'h-gone', leafId: 'l-gone', title: 'Old docs' }
   const s: Schedule = { ...blankSchedule('s1'), name: 'Release', terminal: gone, prompt: 'Ship it' }
   await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ label: 'Edit' })
+  await unfold(view)
+  await act(view, 'Edit')
   const line = view.findAll({ type: 'ListItem' })
   assert.equal(line.length, 1, 'folded to the saved terminal')
   assert.equal(line[0].label, 'Old docs')
@@ -556,7 +577,8 @@ test('editing reopens the form as saved — dates on their month', async () => {
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
   const s: Schedule = { ...blankSchedule('s1'), name: 'Release', terminal: { ...open[0] }, cron: `0 9 20,25 ${m} * ${y}`, prompt: 'Ship it' }
   await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ label: 'Edit' })
+  await unfold(view)
+  await act(view, 'Edit')
   assert.equal(view.find({ label: 'Days' })?.props.value, 'dates')
   assert.ok(view.find({ text: `${months[m - 1]} ${y}` }))
   assert.ok(view.find({ text: '2 dates picked' }))
@@ -751,13 +773,14 @@ test('Skip ends the introduction at once; Settings opens it again, back to the s
   await view.unmount()
 })
 
-test('the empty list is one line and a button; how sending works opens under the list', async () => {
+test('the empty list is one line and a button; how sending works is in Settings, not under the list', async () => {
   const view = await mount(panel, { host: host() })
   const empty = view.find({ label: 'No schedules yet' })
   assert.equal(empty?.props.description, 'Press + on a terminal in the Terminals tab to start.')
   const rule = /^Checks every 30 seconds/
   assert.equal(view.find({ text: rule }), null, 'the rule is not spelled out up front')
-  await view.press({ text: 'How sending works' })
+  assert.equal(view.find({ text: 'How sending works' }), null, 'and the list has no button for it')
+  await view.press({ label: 'Settings' })
   assert.ok(titled(view, 'Callout', 'How sending works'))
   assert.ok(view.find({ text: rule }))
   assert.deepEqual(
@@ -769,8 +792,6 @@ test('the empty list is one line and a button; how sending works opens under the
   assert.ok(view.find({ label: 'Prompts on a schedule' }))
   await view.press({ text: 'Skip' })
   assert.ok(view.find({ label: 'No schedules yet' }), 'opened again, it returns to where it was')
-  await view.press({ type: 'Button', text: 'How sending works' })
-  assert.equal(titled(view, 'Callout', 'How sending works'), null, 'pressed again, it closes')
   await view.press({ text: 'Open Terminals' })
   assert.equal(view.find({ type: 'Tabs' })?.props.value, 'terminals')
   await view.unmount()
@@ -781,6 +802,13 @@ test('time left — seconds under an hour, minutes under a day, in both language
   const ko = words('ko').ui.until
   assert.deepEqual([en(500), en(728_000), en(3_725_000), en(90_000_000)], ['now', 'in 12m 08s', 'in 1h 02m', 'in 1d 1h'])
   assert.deepEqual([ko(500), ko(728_000), ko(3_725_000), ko(90_000_000)], ['곧', '12분 08초 뒤', '1시간 02분 뒤', '1일 1시간 뒤'])
+})
+
+test('time left on a card — to the minute, so a card does not tick by the second', () => {
+  const en = words('en').ui.inAbout
+  const ko = words('ko').ui.inAbout
+  assert.deepEqual([en(59_000), en(728_000), en(3_725_000), en(90_000_000)], ['now', 'in 12m', 'in 1h 02m', 'in 1d 1h'])
+  assert.deepEqual([ko(59_000), ko(728_000), ko(3_725_000), ko(90_000_000)], ['곧', '12분 뒤', '1시간 02분 뒤', '1일 1시간 뒤'])
 })
 
 test('the next run counts down every second while the panel is in view, and rests while hidden', async () => {
@@ -978,6 +1006,13 @@ test('a record shows what the agent wrote — the summary, and the link by its a
   }
   const silent: Schedule = { ...blankSchedule('s2'), name: 'Old one', terminal: { ...open[0] }, prompt: 'x', nextRunAt: Date.now() + 7200_000 }
   await view.post('schedules.changed', { schedules: [asked, silent] })
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  assert.ok(texts().includes(`${whenText('en', asked.history[0].at)} · took 4 min`), 'folded: how the last run went, when, how long')
+  assert.equal(view.find({ type: 'Text', text: '3 PRs need review, 1 has a failing check' }), null, 'what the agent wrote opens with the card')
+  assert.equal(view.findAll({ type: 'Link' }).length, 0, 'and so does its link')
+  assert.equal(titled(view, 'Collapsible', 'History (2)'), null, 'history waits in the opened card')
+  assert.equal(view.find({ text: 'Plan the day' }), null, 'and so does the prompt')
+  await unfold(view)
   const summary = view.find({ type: 'Text', text: '3 PRs need review, 1 has a failing check' })
   assert.ok(summary)
   assert.notEqual(summary.props.truncate, true, 'the whole sentence, wrapped')
@@ -987,15 +1022,18 @@ test('a record shows what the agent wrote — the summary, and the link by its a
     [[link, 'github.com']],
     'the link is the site it leads to; a record without one has none'
   )
-  // The test kit reads a line's parts with a space between them; on screen the path follows the site directly.
-  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'github.com /acme/notes/pull/128'), 'the path follows it in the same line')
+  // When, how long and the link share the line under it. The test kit reads a line's parts with a space
+  // between them; on screen the path follows the site directly.
+  assert.ok(texts().includes(`${whenText('en', asked.history[0].at)} · took 4 min · github.com /acme/notes/pull/128`), 'what the agent wrote first, then when, how long and where')
+  assert.ok(texts().indexOf('3 PRs need review, 1 has a failing check') < texts().findIndex((x) => x.includes('took 4 min')))
+  assert.ok(view.find({ type: 'Text', text: 'Plan the day' }), 'opened: what this schedule sends')
   await view.toggle(titled(view, 'Collapsible', 'History (2)')!)
   assert.ok(view.find({ type: 'Text', text: 'The build broke' }), 'older results under History')
 
-  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[0])
+  await act(view, 'Edit', 0)
   assert.equal(view.find({ label: 'Ask for a one-line result' })?.props.checked, true)
   await view.press({ text: 'Cancel' })
-  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[1])
+  await act(view, 'Edit', 1)
   assert.equal(view.find({ label: 'Ask for a one-line result' })?.props.checked, false, 'a schedule from before the option stays as it was')
   await view.press({ text: 'Save' })
   assert.equal(saved[0].report, false)
@@ -1064,7 +1102,7 @@ test('a one-off send shows its result like a schedule does — how long, why it 
   const asking = once('o3', 'Pick a name', { lastStatus: 'doneWaiting', history: [{ at: at(10, 0), status: 'doneWaiting', tookMs: 60_000 }] })
   await view.post('schedules.changed', { schedules: [done, failed, asking] })
   await view.toggle(titled(view, 'Collapsible', 'Sent 3 · last today 12:03')!)
-  assert.ok(view.find({ type: 'Text', text: 'today 12:03 · took 4 min' }))
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'today 12:03 · took 4 min · github.com /acme/notes/pulls'))
   assert.ok(view.find({ type: 'Text', text: '2 PRs wait for review' }))
   assert.deepEqual(
     view.findAll({ type: 'Link' }).map((e) => [e.props.href, e.text]),
@@ -1100,11 +1138,13 @@ test('History shows every record it counts; a long site name is shown whole in a
   const history = Array.from({ length: 12 }, (_, i) => ({ at: Date.now() - (i + 1) * 3600_000, status: 'success' as const, summary: `run ${i + 1}`, ...(i === 0 ? { link: `https://${site}/${'p'.repeat(80)}` } : {}) }))
   const s: Schedule = { ...blankSchedule('s1'), name: 'Hourly', terminal: { ...open[0] }, lastStatus: 'success', history }
   await view.post('schedules.changed', { schedules: [s] })
+  await unfold(view)
   await view.toggle(titled(view, 'Collapsible', 'History (12)')!)
   assert.equal(view.findAll({ type: 'Text', text: /^run \d+$/ }).length, 13, 'the newest above, then all twelve')
   assert.equal(plain(view.findAll({ type: 'Link' })[0].text), site, 'the site is never the part cut off')
-  const line = view.findAll({ type: 'Text' }).map((e) => plain(e.text)).find((text) => text.startsWith(site))
-  assert.ok(line?.startsWith(`${site} /ppp`) && line.endsWith('…') && line.length === site.length + 1 + 40, 'the path is')
+  const line = view.findAll({ type: 'Text' }).map((e) => plain(e.text)).find((text) => text.includes(site))
+  const address = line?.slice(line.indexOf(site))
+  assert.ok(address?.startsWith(`${site} /ppp`) && address.endsWith('…') && address.length === site.length + 1 + 40, 'the path is')
   await view.unmount()
 })
 
@@ -1155,16 +1195,69 @@ test('nothing a person or an agent wrote can push a card wider than the panel �
     ...blankSchedule('s1'),
     name: `Nightly-${run}`,
     terminal: { ...open[0] },
+    prompt: `Read ${run} and report`,
     lastStatus: 'failed',
     history: [{ at: Date.now() - 60_000, status: 'failed', note: { code: 'sendFailed', detail: `no_such_${run}` }, summary: `path/${run}`, link: `https://example.com/${run}` }]
   }
   const view = await mount(panel, { host: host() })
   await view.post('schedules.changed', { schedules: [s] })
+  await unfold(view)
   const drawn = [...view.findAll({ type: 'Text' }), ...view.findAll({ type: 'Link' })].map((e) => e.text).filter((text) => plain(text).includes('AAAA'))
-  assert.equal(drawn.length, 3, 'the note, the summary, and the line the link sits in')
+  assert.equal(drawn.length, 3, 'the summary, the line with the note and the link, and the prompt')
   for (const text of drawn) assert.ok(longest(text) <= 16, text)
   const name = view.find({ type: 'Switch' })?.props.label as string
   assert.equal(plain(name), `Nightly-${run}`)
   assert.ok(longest(name) <= 16)
+  await view.unmount()
+})
+
+test('a folded card is for a glance — name, next run, how the last one went; the rest opens in place', async () => {
+  const view = await mount(panel, { host: host() })
+  const next = Date.now() + (2 * 60 + 33) * 60_000 + 30_000
+  const long = `Collect the numbers ${'and check them again '.repeat(12)}`
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'Board check',
+    terminal: { ...open[0] },
+    cron: '13 12,19 * * *',
+    prompt: long,
+    clearFirst: true,
+    nextRunAt: next,
+    lastStatus: 'done',
+    history: [
+      { at: at(15, 44), status: 'done', tookMs: 17 * 60_000, note: { code: 'byScreen', reason: 'noLine' } },
+      { at: at(12, 13), status: 'skipped', tookMs: 4 * 60_000, note: { code: 'byScreen' }, summary: 'Nothing changed' }
+    ]
+  }
+  await view.post('schedules.changed', { schedules: [s] })
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  const card = (): string[] => view.findAll({ type: 'IconButton' }).map((e) => e.label).filter((label) => ['Send now', 'More', 'Less', 'Edit', 'Duplicate', 'Delete'].includes(label))
+  assert.deepEqual(card(), ['Send now', 'More'], 'two buttons, not four')
+  const line = texts().find((x) => x.startsWith('next '))
+  assert.ok(line?.startsWith(`next ${whenText('en', next)} · in 2h 3`) && /in 2h 3[23]m$/.test(line), `when, and how long until then — ${line}`)
+  assert.ok(texts().includes('today 15:44 · took 17 min'), 'how the last run went: the badge, when, how long')
+  assert.equal(texts().some((x) => /by screen|result line/i.test(x)), false, 'how the end was seen opens with the card')
+  assert.equal(texts().some((x) => x.includes('12:13') || x.includes('/clear') || x.includes('Collect')), false, 'the rule and the prompt wait')
+
+  await view.press({ type: 'IconButton', label: 'More' })
+  assert.deepEqual(card(), ['Send now', 'Less'])
+  assert.ok(texts().some((x) => x.includes('12:13') && x.endsWith('· /clear')), 'the rule, and that it clears first')
+  const shown = texts().find((x) => x.startsWith('Collect the numbers'))
+  assert.ok(shown && shown.length === 160 && shown.endsWith('…'), 'the start of the prompt, not all of it')
+  assert.deepEqual(
+    view.findAll({ type: 'Button' }).map((e) => e.text).filter((x) => ['Edit', 'Duplicate', 'Delete'].includes(x)),
+    ['Edit', 'Duplicate', 'Delete']
+  )
+  assert.ok(texts().includes('today 15:44 · took 17 min · by screen: no result line on screen'), 'opened, the last run says how its end was seen')
+  assert.equal(texts().includes('today 15:44 · took 17 min'), false, 'in place of the short line, not under it')
+  assert.equal(texts().includes('Nothing changed'), false, 'older runs wait under History')
+  await view.toggle(titled(view, 'Collapsible', 'History (2)')!)
+  assert.ok(texts().includes('today 12:13 · took 4 min · by screen'))
+  assert.ok(texts().includes('Nothing changed'))
+
+  await view.press({ type: 'IconButton', label: 'Less' })
+  assert.deepEqual(card(), ['Send now', 'More'])
+  assert.equal(view.find({ type: 'Button', text: 'Edit' }), null)
+  assert.ok(texts().includes('today 15:44 · took 17 min'), 'folded again, the short line is back')
   await view.unmount()
 })

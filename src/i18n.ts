@@ -257,6 +257,15 @@ const en = {
       if (h > 0) return `in ${h}h ${pad2(m)}m`
       return `in ${m}m ${pad2(sec)}s`
     },
+    /** `until` to the minute — a card does not tick by the second. */
+    inAbout: (ms: number) => {
+      const [d, h, m] = parts(ms)
+      if (ms < 60_000) return 'now'
+      if (d > 0) return `in ${d}d ${h}h`
+      return h > 0 ? `in ${h}h ${pad2(m)}m` : `in ${m}m`
+    },
+    more: 'More',
+    less: 'Less',
     loading: 'Reading the list',
     today: 'today',
     tomorrow: 'tomorrow'
@@ -494,6 +503,14 @@ const ko: Words = {
       if (h > 0) return `${h}시간 ${pad2(m)}분 뒤`
       return `${m}분 ${pad2(sec)}초 뒤`
     },
+    inAbout: (ms) => {
+      const [d, h, m] = parts(ms)
+      if (ms < 60_000) return '곧'
+      if (d > 0) return `${d}일 ${h}시간 뒤`
+      return h > 0 ? `${h}시간 ${pad2(m)}분 뒤` : `${m}분 뒤`
+    },
+    more: '더 보기',
+    less: '접기',
     loading: '목록을 읽는 중',
     today: '오늘',
     tomorrow: '내일'

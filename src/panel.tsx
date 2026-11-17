@@ -104,10 +104,10 @@ const SAVED_MS = 4000
 const onboarded = atom('onboarded', false, { persist: 'storage' })
 /** The introduction's page, when opened again from Settings. */
 const introStep = atom<number | null>(null)
-/** How sending works, opened under the list. */
-const helpOpen = atom(false)
 /** The schedule asked to be deleted, until that is confirmed or cancelled — one at a time. */
 const confirmDelete = atom<string | null>(null)
+/** The cards opened to their rule, prompt, actions and history. */
+const openCards = atom<string[]>([])
 /** What each version changed — the releases of the public repository, newest first. */
 const RELEASE_NOTES = 'https://github.com/gook-lab/orca-agent-scheduler/releases'
 
@@ -541,12 +541,15 @@ function Header() {
           {TITLE}
         </Text>
       </Box>
-      <Toolbar label={u.actions} gap="none">
-        <IconButton icon="add" size="sm" variant="ghost" label={u.newSchedule} onPress={() => openNew()} />
-        <IconButton icon="next" size="sm" variant="ghost" label={u.sendOnce} onPress={() => openSend()} />
-        <ReloadButton />
-        <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={openSettings} />
-      </Toolbar>
+      {/* The title gives way, not the buttons: squeezed, the row of four broke in two. */}
+      <Box shrink={false}>
+        <Toolbar label={u.actions} gap="none">
+          <IconButton icon="add" size="sm" variant="ghost" label={u.newSchedule} onPress={() => openNew()} />
+          <IconButton icon="next" size="sm" variant="ghost" label={u.sendOnce} onPress={() => openSend()} />
+          <ReloadButton />
+          <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={openSettings} />
+        </Toolbar>
+      </Box>
     </Box>
   )
 }
@@ -728,40 +731,56 @@ export function linkParts(url: string): { site: string; path: string } {
   return { site: soft(site), path: soft(path.replace(/([/?#&=._-])(?=.)/g, `$1${BREAK}`)) }
 }
 
-function ResultLink({ url }: { url: string }) {
-  const { site, path } = linkParts(url)
-  return (
-    <Text size="xs">
-      <Link href={url}>{site}</Link>
-      {path}
-    </Text>
-  )
-}
-
-/** What a result says beside its badge. The text wraps: cut to one line, a late run's record lost how
- *  long it took. Under it, what the agent wrote in its result line. */
-function RecordDetail({ r }: { r: RunRecord }) {
+/** A record beside its badge. What the agent wrote comes first — it is what the run was for — then when,
+ *  how long and the link, in one line that wraps. `glance` is the folded card's reading. */
+function RecordDetail({ r, glance }: { r: RunRecord; glance?: boolean }) {
   const l = read(lang)
+  // A folded card says when the last run was and how long it took. What the agent wrote, its link and
+  // the why are a click away, with the rest of the card.
+  if (glance)
+    return (
+      <Text muted size="xs">
+        {[whenText(l, r.at), recordText(l, { tookMs: r.tookMs })].filter(Boolean).join(' · ')}
+      </Text>
+    )
+  const meta = [whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')
+  const link = r.link ? linkParts(r.link) : null
   return (
     <Stack gap="none">
-      <Text muted size="xs">
-        {soft([whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · '))}
-      </Text>
       {r.summary ? <Text size="xs">{soft(r.summary)}</Text> : null}
-      {r.link ? <ResultLink url={r.link} /> : null}
+      <Text muted size="xs">
+        {soft(meta)}
+        {link ? ' · ' : null}
+        {link ? <Link href={r.link}>{link.site}</Link> : null}
+        {link ? link.path : null}
+      </Text>
     </Stack>
   )
 }
 
-function RecordLine({ r }: { r: RunRecord }) {
+function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
   return (
-    <Box direction="row" align="start" gap="xs">
+    <Box direction="row" align={glance ? 'center' : 'start'} gap="xs">
       <Badge tone={statusTone(r.status)}>{statusText(read(lang), r.status)}</Badge>
       <Box grow shrink minWidth={0}>
-        <RecordDetail r={r} />
+        <RecordDetail r={r} glance={glance} />
       </Box>
     </Box>
   )
+}
+
+/** The start of a prompt, on one line — enough to tell which schedule this is. */
+const promptPreview = (prompt: string): string => {
+  const line = prompt.replace(/\s+/g, ' ').trim()
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line
+}
+
+function toggleCard(id: string): void {
+  const open = read(openCards)
+  if (!open.includes(id)) return set(openCards, [...open, id])
+  set(openCards, open.filter((x) => x !== id))
+  // The question about deleting sits in the part that folds away.
+  if (read(confirmDelete) === id) set(confirmDelete, null)
 }
 
 function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) {
@@ -788,9 +807,17 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
         {u.showInOrca}
       </Button>
     ) : null
-  const nextText = s.enabled ? (s.nextRunAt !== null ? `${u.next} ${whenText(l, s.nextRunAt)}` : u.never) : u.off
+  const nextText = s.enabled
+    ? s.nextRunAt !== null
+      ? `${u.next} ${whenText(l, s.nextRunAt)} · ${u.inAbout(s.nextRunAt - read(now))}`
+      : u.never
+    : u.off
   const saved = read(justSaved) === s.id
+  const open = read(openCards).includes(s.id)
   return (
+    // Folded, a card says what a glance is for: which schedule, when it runs next, how the last run
+    // went. What the agent wrote, the rule, the prompt, the history and what is done now and then —
+    // edit, duplicate, delete — open in place: Orca's panel kit has no menu that pops up.
     // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.
     <Box
       border={saved ? 'success' : true}
@@ -804,10 +831,9 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
       <Box direction="row" align="center" gap="xs">
         <Box grow shrink minWidth={0}>
           <Text size="xs" muted>
-            {[nextText, describe(s.cron, l), s.clearFirst ? '/clear' : ''].filter(Boolean).join(' · ')}
+            {nextText}
           </Text>
         </Box>
-        {/* Keeps its width — squeezed, the toolbar wraps its last button onto a second line. */}
         <Box shrink={false}>
           <Toolbar label={s.name} gap="none">
             <IconButton
@@ -819,9 +845,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
               disabled={sendBlock !== null}
               onPress={() => void plugin.request('schedules.runNow', { id: s.id })}
             />
-            <IconButton icon="edit" size="xs" variant="ghost" label={u.edit} onPress={() => edit(s)} />
-            <IconButton icon="copy" size="xs" variant="ghost" label={u.duplicate} onPress={() => duplicate(s)} />
-            <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => set(confirmDelete, s.id)} />
+            <IconButton icon={open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={open ? u.less : u.more} onPress={() => toggleCard(s.id)} />
           </Toolbar>
         </Box>
       </Box>
@@ -831,7 +855,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           <Text size="xs" tone="accent">{`${u.running} ${whenText(l, s.sentAt)}`}</Text>
         </Row>
       ) : last ? (
-        <RecordLine r={last} />
+        <RecordLine r={last} glance={!open} />
       ) : null}
       {note && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
@@ -861,29 +885,52 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           <Row>{fixButton}</Row>
         </Stack>
       ) : null}
-      {read(confirmDelete) === s.id ? (
-        <Callout tone="danger" icon="warning" title={soft(u.deleteAsk(s.name))}>
-          <Stack gap="xs">
-            {s.history.length > 0 ? <Text size="xs">{u.deleteLoses(s.history.length)}</Text> : null}
-            <Row gap="xs">
-              <Button size="xs" variant="outline" tone="danger" onPress={() => remove(s)}>
+      {open ? (
+        <Stack gap="xs">
+          <Separator />
+          <Text size="xs" muted>
+            {[describe(s.cron, l), s.clearFirst ? '/clear' : ''].filter(Boolean).join(' · ')}
+          </Text>
+          <Text size="xs">{soft(promptPreview(s.prompt))}</Text>
+          {read(confirmDelete) === s.id ? (
+            // The question takes the buttons' place — two "Delete"s at once would be one too many.
+            <Callout tone="danger" icon="warning" title={soft(u.deleteAsk(s.name))}>
+              <Stack gap="xs">
+                {s.history.length > 0 ? <Text size="xs">{u.deleteLoses(s.history.length)}</Text> : null}
+                <Row gap="xs">
+                  <Button size="xs" variant="outline" tone="danger" onPress={() => remove(s)}>
+                    {u.remove}
+                  </Button>
+                  <Button size="xs" variant="ghost" onPress={() => set(confirmDelete, null)}>
+                    {u.cancel}
+                  </Button>
+                </Row>
+              </Stack>
+            </Callout>
+          ) : (
+            <Row gap="xs" wrap>
+              <Button size="xs" variant="outline" icon="edit" onPress={() => edit(s)}>
+                {u.edit}
+              </Button>
+              <Button size="xs" variant="outline" icon="copy" onPress={() => duplicate(s)}>
+                {u.duplicate}
+              </Button>
+              <Button size="xs" variant="ghost" icon="delete" onPress={() => set(confirmDelete, s.id)}>
                 {u.remove}
               </Button>
-              <Button size="xs" variant="ghost" onPress={() => set(confirmDelete, null)}>
-                {u.cancel}
-              </Button>
             </Row>
-          </Stack>
-        </Callout>
-      ) : null}
-      {s.history.length > 1 ? (
-        <Collapsible title={u.history(s.history.length)}>
-          <Stack gap="xs">
-            {s.history.map((r) => (
-              <RecordLine r={r} />
-            ))}
-          </Stack>
-        </Collapsible>
+          )}
+          {/* One run is the line above; History is for the ones before it. */}
+          {s.history.length > 1 ? (
+            <Collapsible title={u.history(s.history.length)}>
+              <Stack gap="xs">
+                {s.history.map((r) => (
+                  <RecordLine r={r} />
+                ))}
+              </Stack>
+            </Collapsible>
+          ) : null}
+        </Stack>
       ) : null}
     </Box>
   )
@@ -1566,7 +1613,11 @@ function Settings() {
         ]}
         onChange={pick}
       />
-      <Row>
+      {/* The rule for sending is read once or twice — here, not under a list that is looked at all day. */}
+      <Callout tone="neutral" icon="info" title={u.help}>
+        <Text size="xs">{u.footer}</Text>
+      </Callout>
+      <Box direction="row" align="center" gap="sm" wrap>
         <Button
           size="sm"
           variant="outline"
@@ -1578,13 +1629,14 @@ function Settings() {
         >
           {u.showIntro}
         </Button>
-      </Row>
+        <Link href={RELEASE_NOTES}>{u.whatsNew}</Link>
+      </Box>
       <Importer />
     </Stack>
   )
 }
 
-// ───────────────────────── Introduction · help ─────────────────────────
+// ───────────────────────── Introduction ─────────────────────────
 
 const introIcons: IconName[] = ['calendar', 'gauge', 'terminal']
 
@@ -1635,34 +1687,6 @@ function Intro() {
   )
 }
 
-/** ⓘ under the list; pressing it opens the rule for sending in place, pressing again closes it. */
-function Help() {
-  const u = words(read(lang)).ui
-  const open = read(helpOpen)
-  return (
-    <Stack gap="xs">
-      <Row>
-        <Button size="xs" variant="ghost" icon="info" onPress={() => set(helpOpen, !open)}>
-          {u.help}
-        </Button>
-      </Row>
-      {open ? (
-        <Callout tone="neutral" icon="info" title={u.help}>
-          <Stack gap="xs">
-            <Text size="xs">{u.footer}</Text>
-            <Row gap="xs" wrap>
-              <Button size="xs" variant="ghost" onPress={() => set(introStep, 0)}>
-                {u.showIntro}
-              </Button>
-              <Link href={RELEASE_NOTES}>{u.whatsNew}</Link>
-            </Row>
-          </Stack>
-        </Callout>
-      ) : null}
-    </Stack>
-  )
-}
-
 // ───────────────────────── Panel ─────────────────────────
 
 export default function Panel() {
@@ -1674,7 +1698,6 @@ export default function Panel() {
       <Header />
       <Nav />
       {read(tab) === 'terminals' ? <TerminalsView /> : <SchedulesView />}
-      <Help />
     </Stack>
   )
 }

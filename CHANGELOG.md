@@ -2,6 +2,17 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.11.0 — 2026-11-17
+
+The schedule card, redone for a glance.
+
+- **A card is folded until it is opened.** Folded, it shows the name with its switch, the next run with the time left (`next today 19:13 · in 2h 33m`), and how the last run went — status, when, how long. Two buttons instead of four: send now (▷) and open (⌄).
+- **Opened in place** (⌄): what the agent wrote and its link, how the run's end was seen, the rule (with `/clear` when it clears first), the start of the prompt, then **Edit**, **Duplicate** and **Delete** as named buttons, and the history. Orca's panel kit has no menu that pops up, so the card opens instead. Folding a card drops its delete question.
+- **How sending works** moved from under the list to Settings, with **What's new** beside *Show the introduction again*. The list holds schedules only.
+- The title row's four buttons stay in one row on a very narrow panel — at 280 px with a scrollbar they broke in two; the title gives way instead.
+
+Checked on the real panel at 280 and 457 px, folded and opened.
+
 ## 0.10.3 — 2026-11-17
 
 - **A long address no longer pushes the card out of the panel.** A result link has no spaces, so on a narrow panel it ran past the card's edge and the whole panel scrolled sideways (a 304 px panel, a 41-letter address). The site is now the link, and the path follows it as text that breaks after each `/`, `.`, `-`, `?`, `&`, `=`.

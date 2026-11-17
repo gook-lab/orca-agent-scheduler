@@ -122,3 +122,11 @@ The README pictures are scenarios from `src/panel.check.ts`, shot while Orca's w
 $ORCA plugin shot . --scenario open  --theme dark --width 360 --out docs/panel-schedules.png
 $ORCA plugin shot . --scenario first --theme dark --width 360 --out docs/panel-first.png
 ```
+
+The plugin page's icon and cover are `docs/icon.svg` and `docs/cover.html` (which shows the two pictures above), rendered with headless Chrome:
+
+```bash
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+"$CHROME" --headless=new --hide-scrollbars --force-device-scale-factor=1 --default-background-color=00000000 --window-size=512,512 --screenshot="$PWD/docs/icon.png" "file://$PWD/docs/icon.svg"
+"$CHROME" --headless=new --hide-scrollbars --force-device-scale-factor=1 --window-size=1280,800 --screenshot="$PWD/docs/cover.png" "file://$PWD/docs/cover.html"
+```

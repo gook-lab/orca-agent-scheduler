@@ -1,0 +1,116 @@
+<!doctype html>
+<!-- The plugin page cover. Rendered to docs/cover.png at 1280×800 (README "Development"). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent Scheduler — cover</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        gap: 44px;
+        box-sizing: border-box;
+        padding: 0 64px;
+        color: #ecebf5;
+        background:
+          radial-gradient(900px 600px at 78% 20%, rgba(150, 120, 255, 0.22), transparent 70%),
+          linear-gradient(135deg, #1d1a33 0%, #100f19 100%);
+        font-family:
+          -apple-system,
+          'Helvetica Neue',
+          sans-serif;
+      }
+      .text {
+        flex: 1;
+        min-width: 0;
+      }
+      .text img {
+        width: 76px;
+        height: 76px;
+        display: block;
+      }
+      h1 {
+        margin: 26px 0 0;
+        font-size: 46px;
+        line-height: 1.1;
+        letter-spacing: -0.5px;
+      }
+      .lead {
+        margin: 16px 0 0;
+        font-size: 21px;
+        line-height: 1.45;
+        color: #c9c5dd;
+      }
+      ul {
+        margin: 30px 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 17px;
+        line-height: 1.4;
+        color: #dedbee;
+      }
+      li {
+        margin-top: 12px;
+        padding-left: 22px;
+        position: relative;
+      }
+      li::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #5ad68a;
+      }
+      figure {
+        margin: 0;
+        flex: none;
+        align-self: flex-start;
+        margin-top: 38px;
+      }
+      figure img {
+        display: block;
+        width: 360px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      }
+      figcaption {
+        margin-top: 14px;
+        font-size: 14px;
+        color: #a8a3c2;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="text">
+      <img src="icon.svg" alt="" />
+      <h1>Agent Scheduler</h1>
+      <p class="lead">Prompts on a schedule, for the agent terminals you already have open in Orca.</p>
+      <ul>
+        <li>Claude Code, Codex and Gemini CLI</li>
+        <li>Waits until the terminal is idle</li>
+        <li>Days, dates, every N minutes, or cron</li>
+        <li>English and Korean</li>
+      </ul>
+    </div>
+    <figure>
+      <img src="panel-schedules.png" alt="" />
+      <figcaption>Schedules, grouped by terminal</figcaption>
+    </figure>
+    <figure>
+      <img src="panel-first.png" alt="" />
+      <figcaption>A short introduction the first time</figcaption>
+    </figure>
+  </body>
+</html>

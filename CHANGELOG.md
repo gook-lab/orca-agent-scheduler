@@ -2,6 +2,10 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one.
 
+## 0.9.11 — 2026-11-17
+
+- The plugin page gets an icon and a cover picture. No change in behaviour.
+
 ## 0.9.10 — 2026-11-17
 
 - README shows the panel: the Schedules tab and the introduction. No change in behaviour.

@@ -78,7 +78,7 @@ The worker finds that line on the terminal screen — the screen it already read
 | The line is taken when first seen, and ends the run | The end event may never come, and on a small pane later output pushes the line off the screen before a quiet moment does |
 | A line that comes after the end is taken for 60 minutes | An agent that ended its turn to wait for its own background command writes the line when the command is done. The record takes its status, summary and link then, and stops saying the line is missing; a late Failed is notified |
 | A mark before the link is passed by | Claude Code draws `⧉` before a link |
-| Only `http` and `https` links are kept, and none with a name before the site (`user@site`) | The panel opens them in the browser, and shows the site in full so you can read where a link leads; `https://known.site@other.site/` would read as one site and lead to another |
+| Only `http` and `https` links are kept, and none with a name before the site (`user@site`) | The panel opens them in the browser, and `https://known.site@other.site/` would read as one site and lead to another. The site is the link, shown in full so you can read where it leads; the start of the path follows as text and wraps |
 | A turn that failed or was stopped stays so | The line sets the status only of a run that ended normally. A run the agent calls `failed` is announced with its summary |
 | A prompt that starts with `/` gets no sentence | It is a command of the agent — text after it would be read as its arguments |
 | No line, no result | The run ends as before (Done, Succeeded…), without a summary, and its record says `No result line on screen` — unless it stopped at a question, where the line was not due yet |
@@ -114,6 +114,8 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Settings | Language (same as Orca, English or Korean), Show the introduction again, and Import from OrcaCron when that app's schedules are on this computer |
 
 Until the worker first answers, both tabs show a loading placeholder rather than an empty list, and the tab names carry no number (a 0 would read as none).
+
+Text a person or an agent wrote — a name, a summary, the reason in a note, an address — wraps inside its card at any panel width: a run of 16 letters with no space gets a place to break (checked on the real panel at 280, 304 and 457 px).
 
 A closed terminal keeps its block, greyed out, with its last known agent. A schedule there that is switched on says in orange that nothing can be sent, with **Pick a terminal** (Edit, opened at the terminal list); a due run waits until the terminal is open again or you pick another.
 

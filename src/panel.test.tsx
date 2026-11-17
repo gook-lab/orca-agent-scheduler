@@ -11,6 +11,9 @@ const open: TerminalOption[] = [
   { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'w2', workspace: 'toy', tabId: 't2', leafId: 'l2' }
 ]
 
+/** What a person reads — without the places a long run of letters may break at. */
+const plain = (text: string): string => text.replaceAll('\u200b', '')
+
 type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][]; ran: string[] }
 
 type HostOpts = {
@@ -980,9 +983,11 @@ test('a record shows what the agent wrote — the summary, and the link by its a
   const shown = view.findAll({ type: 'Link' })
   assert.deepEqual(
     shown.map((e) => [e.props.href, e.text]),
-    [[link, 'github.com/acme/notes/pull/128']],
-    'the link reads as where it leads; a record without one has none'
+    [[link, 'github.com']],
+    'the link is the site it leads to; a record without one has none'
   )
+  // The test kit reads a line's parts with a space between them; on screen the path follows the site directly.
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'github.com /acme/notes/pull/128'), 'the path follows it in the same line')
   await view.toggle(titled(view, 'Collapsible', 'History (2)')!)
   assert.ok(view.find({ type: 'Text', text: 'The build broke' }), 'older results under History')
 
@@ -1062,9 +1067,9 @@ test('a one-off send shows its result like a schedule does — how long, why it 
   assert.ok(view.find({ type: 'Text', text: '2 PRs wait for review' }))
   assert.deepEqual(
     view.findAll({ type: 'Link' }).map((e) => [e.props.href, e.text]),
-    [['https://github.com/acme/notes/pulls', 'github.com/acme/notes/pulls']]
+    [['https://github.com/acme/notes/pulls', 'github.com']]
   )
-  assert.ok(view.find({ type: 'Text', text: 'today 11:00 · Send failed: terminal_handle_stale' }), 'why a send failed stays with it')
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'today 11:00 · Send failed: terminal_handle_stale'), 'why a send failed stays with it')
   assert.equal(view.find({ type: 'Badge', text: 'Done (awaiting input)' })?.props.tone, 'warning', 'stopped at a question — a person is needed, so not green')
   assert.equal(view.find({ type: 'Badge', text: 'Succeeded' })?.props.tone, 'success')
   assert.deepEqual(view.errors, [])
@@ -1096,8 +1101,9 @@ test('History shows every record it counts; a long site name is shown whole in a
   await view.post('schedules.changed', { schedules: [s] })
   await view.toggle(titled(view, 'Collapsible', 'History (12)')!)
   assert.equal(view.findAll({ type: 'Text', text: /^run \d+$/ }).length, 13, 'the newest above, then all twelve')
-  const shown = view.findAll({ type: 'Link' })[0].text
-  assert.ok(shown.startsWith(`${site}/ppp`) && shown.endsWith('…'), 'the site is never the part cut off')
+  assert.equal(plain(view.findAll({ type: 'Link' })[0].text), site, 'the site is never the part cut off')
+  const line = view.findAll({ type: 'Text' }).map((e) => plain(e.text)).find((text) => text.startsWith(site))
+  assert.ok(line?.startsWith(`${site} /ppp`) && line.endsWith('…') && line.length === site.length + 1 + 40, 'the path is')
   await view.unmount()
 })
 
@@ -1126,5 +1132,38 @@ test('OrcaCron — when what is left cannot be imported, it does not say everyth
   assert.equal(view.find({ text: 'Everything is already imported.' }), null)
   assert.equal(view.find({ type: 'Button', text: /^Import / }), null)
   assert.ok(view.find({ text: /limit on late runs does not come over/ }), 'what the copy leaves behind is said before importing')
+  await view.unmount()
+})
+
+test('nothing a person or an agent wrote can push a card wider than the panel — long runs of letters get places to break', async () => {
+  const longest = (text: string): number => Math.max(...text.split(/[\s\u200b]/).map((piece) => piece.length))
+  // The site is the link, whole and on one line when it fits; the path breaks after its separators, and
+  // inside an id that has none.
+  const address = panel.linkParts('https://claude.ai/artifact/a1B2c3D4e5F6g7H8i9J0k1L2m3N4')
+  assert.equal(address.site, 'claude.ai')
+  assert.equal(plain(address.path), '/artifact/a1B2c3D4e5F6g7H8i9J0k1L2m3N4', 'the same letters')
+  assert.ok(address.path.startsWith('/\u200bartifact/\u200b'), 'a break after each separator')
+  assert.ok(longest(address.path) <= 16)
+  assert.ok(longest(panel.linkParts(`https://docs.${'a'.repeat(60)}.example/`).site) <= 16, 'a site too long for any panel breaks too')
+  assert.equal(panel.soft('3 PRs need review'), '3 PRs need review', 'words with spaces are left as written')
+  assert.ok(longest(panel.soft(`see ${'x'.repeat(70)}`)) <= 16)
+
+  // The card — name, record note, summary, link — draws them all that way.
+  const run = 'A'.repeat(48)
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: `Nightly-${run}`,
+    terminal: { ...open[0] },
+    lastStatus: 'failed',
+    history: [{ at: Date.now() - 60_000, status: 'failed', note: { code: 'sendFailed', detail: `no_such_${run}` }, summary: `path/${run}`, link: `https://example.com/${run}` }]
+  }
+  const view = await mount(panel, { host: host() })
+  await view.post('schedules.changed', { schedules: [s] })
+  const drawn = [...view.findAll({ type: 'Text' }), ...view.findAll({ type: 'Link' })].map((e) => e.text).filter((text) => plain(text).includes('AAAA'))
+  assert.equal(drawn.length, 3, 'the note, the summary, and the line the link sits in')
+  for (const text of drawn) assert.ok(longest(text) <= 16, text)
+  const name = view.find({ type: 'Switch' })?.props.label as string
+  assert.equal(plain(name), `Nightly-${run}`)
+  assert.ok(longest(name) <= 16)
   await view.unmount()
 })

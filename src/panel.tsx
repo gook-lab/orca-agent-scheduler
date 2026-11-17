@@ -710,13 +710,32 @@ function TerminalLine({
 
 // ───────────────────────── Schedule — switch, actions, next run, last result ─────────────────────────
 
-/** A link as text: the site in full — it is what a person reads to know where the link leads — then
- *  as much of the path as fits. */
-const linkText = (url: string): string => {
+const BREAK = '\u200b'
+
+/** Text a person or an agent wrote, with places to break inside a long run of letters — an id, a path,
+ *  a name with no spaces. Unbroken, one such run pushed its card wider than the panel and the whole
+ *  panel scrolled sideways (a 304 px panel, 2026-11-17). */
+export const soft = (text: string): string => text.replace(/([^\s\u200b]{16})(?=[^\s\u200b])/g, `$1${BREAK}`)
+
+/** A link as it is drawn. The site — what a person reads to know where the link leads — is the link,
+ *  whole; the start of the path follows as text, with a place to break after each separator. Orca draws
+ *  a link as a button, which centres its text once it wraps, so the long part stays outside it. */
+export function linkParts(url: string): { site: string; path: string } {
   const bare = url.replace(/^https?:\/\//i, '')
   const site = bare.split(/[/?#]/, 1)[0]
   const rest = bare.slice(site.length)
-  return site + (rest.length > 40 ? `${rest.slice(0, 39)}…` : rest)
+  const path = rest.length > 40 ? `${rest.slice(0, 39)}…` : rest
+  return { site: soft(site), path: soft(path.replace(/([/?#&=._-])(?=.)/g, `$1${BREAK}`)) }
+}
+
+function ResultLink({ url }: { url: string }) {
+  const { site, path } = linkParts(url)
+  return (
+    <Text size="xs">
+      <Link href={url}>{site}</Link>
+      {path}
+    </Text>
+  )
 }
 
 /** What a result says beside its badge. The text wraps: cut to one line, a late run's record lost how
@@ -726,14 +745,10 @@ function RecordDetail({ r }: { r: RunRecord }) {
   return (
     <Stack gap="none">
       <Text muted size="xs">
-        {[whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')}
+        {soft([whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · '))}
       </Text>
-      {r.summary ? <Text size="xs">{r.summary}</Text> : null}
-      {r.link ? (
-        <Text size="xs">
-          <Link href={r.link}>{linkText(r.link)}</Link>
-        </Text>
-      ) : null}
+      {r.summary ? <Text size="xs">{soft(r.summary)}</Text> : null}
+      {r.link ? <ResultLink url={r.link} /> : null}
     </Stack>
   )
 }
@@ -785,7 +800,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
       gap="xs"
     >
       {/* The name gets the whole width — next to the buttons a long name broke a word per line. */}
-      <Switch label={s.name} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
+      <Switch label={soft(s.name)} checked={s.enabled} onChange={(enabled) => void plugin.request('schedules.toggle', { id: s.id, enabled })} />
       <Box direction="row" align="center" gap="xs">
         <Box grow shrink minWidth={0}>
           <Text size="xs" muted>
@@ -821,7 +836,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
       {note && urgent ? (
         <Callout tone="warning" icon="warning" title={u.attention}>
           <Stack gap="xs">
-            <Text size="xs">{noteText(l, note)}</Text>
+            <Text size="xs">{soft(noteText(l, note))}</Text>
             {fixButton ? <Row>{fixButton}</Row> : null}
           </Stack>
         </Callout>
@@ -832,7 +847,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
           {note ? (
             <Box grow shrink minWidth={0}>
               <Text size="xs" muted>
-                {noteText(l, note)}
+                {soft(noteText(l, note))}
               </Text>
             </Box>
           ) : null}
@@ -847,7 +862,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
         </Stack>
       ) : null}
       {read(confirmDelete) === s.id ? (
-        <Callout tone="danger" icon="warning" title={u.deleteAsk(s.name)}>
+        <Callout tone="danger" icon="warning" title={soft(u.deleteAsk(s.name))}>
           <Stack gap="xs">
             {s.history.length > 0 ? <Text size="xs">{u.deleteLoses(s.history.length)}</Text> : null}
             <Row gap="xs">
@@ -918,11 +933,11 @@ function SentList({ list }: { list: Schedule[] }) {
               )}
               {note && needsAttention(s) ? (
                 <Text size="xs" tone="warning">
-                  {noteText(l, note)}
+                  {soft(noteText(l, note))}
                 </Text>
               ) : note ? (
                 <Text size="xs" muted>
-                  {noteText(l, note)}
+                  {soft(noteText(l, note))}
                 </Text>
               ) : null}
             </Stack>
@@ -987,7 +1002,7 @@ function TerminalBlock({ g }: { g: Group }) {
         <Box direction="row" align="center" gap="xs" border radius="md" paddingX="sm" paddingY="xs">
           <Box grow shrink minWidth={0}>
             <Text size="xs" muted truncate>
-              {u.deleted(gone.name)}
+              {soft(u.deleted(gone.name))}
             </Text>
           </Box>
           <Button size="xs" variant="outline" onPress={restore}>
@@ -1496,10 +1511,10 @@ function Importer() {
           <Box direction="row" align="start" gap="xs">
             <Box grow shrink minWidth={0}>
               <Text size="xs" weight="medium">
-                {i.name}
+                {soft(i.name)}
               </Text>
               <Text size="xs" muted>
-                {[i.badCron ? i.cron : describe(i.cron, l), i.terminal.title, i.open ? '' : u.notOpen].filter(Boolean).join(' · ')}
+                {soft([i.badCron ? i.cron : describe(i.cron, l), i.terminal.title, i.open ? '' : u.notOpen].filter(Boolean).join(' · '))}
               </Text>
             </Box>
             {i.imported ? <Badge tone="success">{w.imported}</Badge> : i.badCron ? <Badge tone="warning">{w.badCron}</Badge> : null}

@@ -2,6 +2,11 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.10.3 — 2026-11-17
+
+- **A long address no longer pushes the card out of the panel.** A result link has no spaces, so on a narrow panel it ran past the card's edge and the whole panel scrolled sideways (a 304 px panel, a 41-letter address). The site is now the link, and the path follows it as text that breaks after each `/`, `.`, `-`, `?`, `&`, `=`.
+- The same for anything a person or an agent wrote — a schedule's name, a summary, the reason in a note, an imported name: a run of 16 letters without a space gets a place to break. Checked on the real panel at 280, 304 and 457 px.
+
 ## 0.10.2 — 2026-11-17
 
 From a day of real use: two runs on a long-lived Claude Code terminal ended late and without their results.

@@ -73,6 +73,31 @@ test('at the set time, an idle terminal gets the prompt', async () => {
   assert.deepEqual(r.notices, [])
 })
 
+test('a run whose time passed unchecked — asleep, Orca closed — still goes out once, marked late', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo()
+  const late = 6 * 60 * min + 2 * min
+  const r = await tick([s], f.io, newMemory(), nine + late)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'caught up, not dropped')
+  assert.equal(s.lateMs, late)
+  assert.deepEqual(r.notices, [{ name: 'Morning', lateMs: late }])
+  assert.ok(s.nextRunAt && s.nextRunAt > nine + late, 'the runs missed in between are not replayed')
+  onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: nine + late + 4 * min })
+  assert.equal(s.history[0].lateMs, late, 'the record keeps how late it went out')
+  assert.equal(s.lateMs, null)
+})
+
+test('a run that only waited its turn, under the 60-minute limit, is not marked late', async () => {
+  const s = sched({ nextRunAt: nine })
+  const f = fakeIo()
+  const r = await tick([s], f.io, newMemory(), nine + limits.maxWaitMs - min)
+  assert.equal(f.sent.length, 1)
+  assert.equal(s.lateMs, null)
+  assert.deepEqual(r.notices, [])
+  onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: nine + limits.maxWaitMs + 4 * min })
+  assert.equal('lateMs' in s.history[0], false)
+})
+
 test('turn start not seen — sent, and the working event decides', async () => {
   const s = sched({ nextRunAt: nine })
   const f = fakeIo({ send: { started: false } })

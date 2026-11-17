@@ -33,6 +33,8 @@ At the set time the run becomes due and is checked every 30 seconds. The prompt 
 
 A run that waits more than 60 minutes is skipped, with the reason it was waiting.
 
+Checks run only while Orca is running and the computer is awake. A run whose time passed meanwhile is not dropped: at the first check after, it goes out once under the same idle check, and its record and a notification say how late (`sent 6 h 2 min late`). Runs missed in between are not replayed — a schedule every 30 minutes sends one prompt after a night asleep, not sixteen. With **Start a new conversation** on, that late run still clears the terminal first.
+
 Sending uses `orca terminal send --terminal <handle> --text <prompt> --enter --wait-submit 8`, run from the CLI inside the running Orca app (`<Orca app>/Contents/Resources/bin/orca`; the `orca` on PATH can belong to another copy). The plugin API is not used for this because of limits measured on Orca 1.4.255:
 
 | Plugin API | Measured | So |

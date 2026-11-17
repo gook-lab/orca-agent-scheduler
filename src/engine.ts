@@ -7,7 +7,15 @@ import { nextRun, parseCron } from './cron'
 import type { Note, NoteCode, Status } from './i18n'
 import { agentKind, permissionPrompt, promptState } from './screen'
 
-export type RunRecord = { at: number; status: Status; tookMs?: number; note?: Note }
+export type RunRecord = {
+  at: number
+  status: Status
+  tookMs?: number
+  note?: Note
+  /** Sent this long after it fell due. Set only past limits.maxWaitMs — a waiting run is skipped by then, so
+   *  only checks that did not run (the computer asleep, Orca closed) get a run here. */
+  lateMs?: number
+}
 
 /** The terminal a schedule sends to. Handles change when Orca restarts; the pane (leaf) id does not. */
 export type TerminalRef = {
@@ -53,6 +61,8 @@ export type Schedule = {
   clearedFor: number | null
   /** Sent and waiting for the agent to stop (when it was sent). */
   sentAt: number | null
+  /** How late the run now in flight went out (RunRecord.lateMs); null when on time. */
+  lateMs: number | null
   sawWorking: boolean
   blocked: Note | null
   lastStatus: Status | null
@@ -109,6 +119,7 @@ export function blankSchedule(id: string): Schedule {
     waitNote: null,
     clearedFor: null,
     sentAt: null,
+    lateMs: null,
     sawWorking: false,
     blocked: null,
     lastStatus: null,
@@ -141,14 +152,21 @@ function record(s: Schedule, r: RunRecord): void {
 }
 
 function finish(s: Schedule, now: number, status: Status, note?: Note): void {
-  record(s, { at: now, status, ...(s.sentAt !== null ? { tookMs: now - s.sentAt } : {}), ...(note ? { note } : {}) })
+  record(s, {
+    at: now,
+    status,
+    ...(s.sentAt !== null ? { tookMs: now - s.sentAt } : {}),
+    ...(note ? { note } : {}),
+    ...(s.lateMs !== null ? { lateMs: s.lateMs } : {})
+  })
   s.sentAt = null
+  s.lateMs = null
   s.sawWorking = false
   s.blocked = null
 }
 
 /** Something a person should hear about; the worker words it in the chosen language. */
-export type Notice = { name: string; status?: Status; note?: Note }
+export type Notice = { name: string; status?: Status; note?: Note; lateMs?: number }
 
 export type TickResult = { log: string[]; notices: Notice[] }
 
@@ -285,6 +303,7 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       continue
     }
 
+    const late = now - s.pendingSince
     const r = await io.send(t.handle, s.prompt)
     s.pendingSince = null
     s.waitNote = null
@@ -296,6 +315,9 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       continue
     }
     s.sentAt = now
+    // Catching up on a run whose time passed unchecked — it still goes out once, and says so.
+    s.lateMs = late >= limits.maxWaitMs ? late : null
+    if (s.lateMs !== null) notices.push({ name: s.name, lateMs: s.lateMs })
     // Seeing the turn start is as good as a "working" event — that event may land while the send waits.
     s.sawWorking = r.started
     s.blocked = null

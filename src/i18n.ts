@@ -84,6 +84,7 @@ const en = {
     notStarted: 'Turn start not confirmed'
   } as Record<NoteCode, string>,
   took: (min: string) => `took ${min}`,
+  late: (span: string) => `sent ${span} late`,
   minutes: (m: number) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`),
   awaitingAnswer: 'Waiting for an answer — check the terminal',
   ui: {
@@ -93,7 +94,7 @@ const en = {
     emptyDescription: 'Press + on a terminal in the Terminals tab to start.',
     openTerminals: 'Open Terminals',
     footer:
-      'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped.',
+      'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped. A run that fell due while the computer slept or Orca was closed still goes out once, marked late.',
     language: 'Language',
     name: 'Name',
     namePlaceholder: 'Morning report',
@@ -296,6 +297,7 @@ const ko: Words = {
     notStarted: '시작 미확인'
   },
   took: (min) => `걸린 시간 ${min}`,
+  late: (span) => `${span} 늦게 보냄`,
   minutes: (m) => (m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`),
   awaitingAnswer: '질문·확인을 기다리며 멈춤 — 그 터미널을 확인해 주세요',
   ui: {
@@ -305,7 +307,7 @@ const ko: Words = {
     emptyDescription: '「터미널」 탭에서 터미널 줄의 + 를 눌러 시작하세요.',
     openTerminals: '터미널 보기',
     footer:
-      'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다.',
+      'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다. 컴퓨터가 자거나 Orca 가 꺼져 있어 놓친 회차는 다시 켜진 뒤 한 번 보내고 「늦게 보냄」으로 남깁니다.',
     language: '언어',
     name: '이름',
     namePlaceholder: '아침 리포트 정리',
@@ -486,9 +488,12 @@ export function noteText(lang: Lang, note: Note): string {
 
 export const minutesText = (lang: Lang, ms: number): string => all[lang].minutes(Math.round(ms / 60_000))
 
-/** History line after the status badge — how long it took, and why. */
-export function recordText(lang: Lang, r: { tookMs?: number; note?: Note }): string {
-  return [r.tookMs !== undefined ? all[lang].took(minutesText(lang, r.tookMs)) : '', r.note ? noteText(lang, r.note) : '']
+/** `sent 6 h 2 min late` for a run caught up after its time; empty when it went out on time. */
+export const lateText = (lang: Lang, lateMs: number | undefined): string => (lateMs === undefined ? '' : all[lang].late(minutesText(lang, lateMs)))
+
+/** History line after the status badge — how late it went out, how long it took, and why. */
+export function recordText(lang: Lang, r: { tookMs?: number; note?: Note; lateMs?: number }): string {
+  return [lateText(lang, r.lateMs), r.tookMs !== undefined ? all[lang].took(minutesText(lang, r.tookMs)) : '', r.note ? noteText(lang, r.note) : '']
     .filter(Boolean)
     .join(' · ')
 }

@@ -16,7 +16,7 @@ import {
   type StatusEvent,
   tick
 } from './engine'
-import { attentionCodes, type Lang, langOf, type Note, noteText, statuses, statusText, words } from './i18n'
+import { attentionCodes, type Lang, langOf, lateText, type Note, noteText, statuses, statusText, words } from './i18n'
 import { LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
 import { agentKind } from './screen'
 import { clock } from './timespec'
@@ -118,7 +118,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   const noticeText = (n: Notice): string => {
     if (n.status === 'doneWaiting') return `${n.name}: ${words(lang).awaitingAnswer}`
-    const parts = [n.status ? statusText(lang, n.status) : '', n.note ? noteText(lang, n.note) : ''].filter(Boolean)
+    const parts = [n.status ? statusText(lang, n.status) : '', n.note ? noteText(lang, n.note) : '', lateText(lang, n.lateMs)].filter(Boolean)
     return `${n.name}: ${parts.join(' — ')}`
   }
 

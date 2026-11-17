@@ -228,7 +228,7 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
     pendingSince: Date.now(),
     waitNote: { code: 'moving' },
     lastStatus: 'done',
-    history: [{ at: Date.now() - 86400_000, status: 'done', tookMs: 3 * 60_000 }]
+    history: [{ at: Date.now() - 86400_000, status: 'done', tookMs: 3 * 60_000, lateMs: 6 * 3600_000 + 2 * 60_000 }]
   }
   const gone: Schedule = { ...blankSchedule('s2'), name: 'Old', terminal: { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, prompt: 'x' }
   await view.post('schedules.changed', { schedules: [running, gone] })
@@ -236,7 +236,7 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   assert.ok(view.find({ text: /This terminal is not open/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
   assert.ok(view.find({ text: 'Done' }))
-  assert.ok(view.find({ text: /took 3 min/ }))
+  assert.ok(view.find({ text: /sent 6 h 2 min late · took 3 min/ }), 'caught up after its time — the record says how late')
   assert.equal(view.find({ label: 'Codex — Show this terminal in Orca' })?.props.disabled, true, 'a closed terminal cannot be shown')
   assert.equal(view.find({ text: 'Spare 6' }), null, 'terminals without schedules are on the other tab')
   assert.ok(view.find({ type: 'Tab', label: 'Schedules 2' }))

@@ -192,6 +192,27 @@ test('a run stopped at a question dialog is held and announced in the chosen lan
   }
 })
 
+test('a run caught up after its time is announced with how late it went out, in the chosen language', async () => {
+  for (const [lang, text] of [
+    ['en', 'Morning report: sent 2 h 0 min late'],
+    ['ko', 'Morning report: 2시간 0분 늦게 보냄']
+  ] as const) {
+    fakeCli()
+    const missed: Schedule = { ...blankSchedule('s1'), ...draft, nextRunAt: Date.now() - 2 * 3600_000 }
+    const h = host({ schedules: [missed], lang })
+    const worker = await mountWorker(main, { host: h })
+    await settle()
+    const stored = h.data().storage.schedules as Schedule[]
+    assert.ok(stored[0].sentAt, 'sent at the first check')
+    assert.deepEqual(
+      (h.callsOf('notifications.show') as { body: string }[]).map((n) => n.body),
+      [text]
+    )
+    await worker.deactivate()
+    main.cli.run = null
+  }
+})
+
 test('the status bar follows the language and flags waits a person must fix', async () => {
   fakeCli({ list: { ok: true, result: { terminals: [] } } })
   const due: Schedule = { ...blankSchedule('s1'), ...draft, pendingSince: Date.now() - 60_000 }

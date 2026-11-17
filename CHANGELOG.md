@@ -2,6 +2,11 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one.
 
+## 0.9.12 — 2026-11-17
+
+- The plugin page gets two screenshots: a late catch-up on the Schedules tab, and the panel in Korean. No change in behaviour.
+- `orca plugin check` draws the scene `late`, and `korean` now shows the usual day rather than the no-CLI warnings.
+
 ## 0.9.11 — 2026-11-17
 
 - The plugin page gets an icon and a cover picture. No change in behaviour.

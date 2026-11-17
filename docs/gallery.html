@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- The plugin page screenshots. One page, picked by the hash (#late, #korean),
+     each rendered to docs/shot-<name>.png at 1280×800 (README "Development"). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent Scheduler — screenshots</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        gap: 72px;
+        box-sizing: border-box;
+        padding: 0 96px;
+        color: #ecebf5;
+        background:
+          radial-gradient(900px 600px at 78% 20%, rgba(150, 120, 255, 0.22), transparent 70%),
+          linear-gradient(135deg, #1d1a33 0%, #100f19 100%);
+        font-family:
+          -apple-system,
+          'Helvetica Neue',
+          sans-serif;
+      }
+      .text {
+        flex: 1;
+        min-width: 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 17px;
+        color: #a8a3c2;
+      }
+      .brand img {
+        width: 36px;
+        height: 36px;
+      }
+      h1 {
+        margin: 28px 0 0;
+        font-size: 44px;
+        line-height: 1.12;
+        letter-spacing: -0.5px;
+      }
+      p {
+        margin: 20px 0 0;
+        font-size: 21px;
+        line-height: 1.5;
+        color: #c9c5dd;
+      }
+      figure {
+        margin: 0;
+        flex: none;
+      }
+      figure img {
+        display: block;
+        max-height: 724px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="text">
+      <div class="brand"><img src="icon.svg" alt="" />Agent Scheduler</div>
+      <h1 id="title"></h1>
+      <p id="body"></p>
+    </div>
+    <figure><img id="panel" alt="" /></figure>
+    <script>
+      const shots = {
+        late: {
+          title: 'Sent when the terminal is free',
+          body: 'At the set time the prompt waits until the agent is idle, then goes in as if you typed it. A run caught up after the computer slept says how late it went out.'
+        },
+        korean: {
+          title: 'English and Korean',
+          body: 'The panel follows the language Orca is in, or the one you fix in Settings. Notifications and the status bar follow.'
+        }
+      }
+      const name = location.hash.slice(1)
+      document.getElementById('title').textContent = shots[name].title
+      document.getElementById('body').textContent = shots[name].body
+      document.getElementById('panel').src = `panel-${name}.png`
+    </script>
+  </body>
+</html>

@@ -86,24 +86,26 @@ const schedules: Schedule[] = [
 ]
 
 // The usual day: every terminal open, one run going, one waiting its turn. The worker here has no Orca
-// CLI, so its answers are given instead; `busy` and `korean` keep the worker's own (the no-CLI warnings).
+// CLI, so its answers are given instead; `busy` keeps the worker's own (the no-CLI warnings).
 const open = schedules.map((s): Schedule =>
   s.id === 's2' ? { ...s, blocked: null } : s.id === 's3' ? { ...s, waitNote: { code: 'busy' } } : s
 )
+// The same day after the computer slept through 09:00: that run went out late, and says so.
+const caughtUp = open.map((s): Schedule =>
+  s.id === 's1' ? { ...s, history: [{ at: now - 30 * 60_000, status: 'done', tookMs: 4 * 60_000, lateMs: 192 * 60_000 }] } : s
+)
 const terminals = schedules.slice(0, 3).map((s) => s.terminal)
+const answered = (list: Schedule[]) => ({
+  'schedules.list': () => list,
+  'terminals.list': () => terminals,
+  'runner.status': () => ({ lastTickAt: now, log: [], cli: true })
+})
 
 export default defineCheck({
   first: { results },
   empty: { results, storage: { onboarded: true } },
-  open: {
-    results,
-    storage: { onboarded: true },
-    requests: {
-      'schedules.list': () => open,
-      'terminals.list': () => terminals,
-      'runner.status': () => ({ lastTickAt: now, log: [], cli: true })
-    }
-  },
+  open: { results, storage: { onboarded: true }, requests: answered(open) },
+  late: { results, storage: { onboarded: true }, requests: answered(caughtUp) },
   busy: { results, storage: { onboarded: true, schedules } },
-  korean: { results, storage: { onboarded: true, schedules, langPref: 'ko' } }
+  korean: { results, storage: { onboarded: true, langPref: 'ko' }, requests: answered(caughtUp) }
 })

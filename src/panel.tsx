@@ -590,7 +590,9 @@ function Nav() {
   )
 }
 
-/** Counts — schedules, on, waiting, running, need attention, runs today. */
+/** How many are on and how many runs went out today, in words — drawn as pills all the time, the counts
+ *  read as filters and did nothing when pressed. Badges are for what is out of the ordinary: waiting,
+ *  running, need attention. */
 function Stats() {
   const u = words(read(lang)).ui
   const list = read(schedules)
@@ -601,15 +603,22 @@ function Stats() {
   const waiting = list.filter((s) => s.pendingSince !== null).length
   const running = list.filter((s) => s.sentAt !== null).length
   const attention = list.filter(needsAttention).length
+  const on = recurring.filter((s) => s.enabled).length
+  // The tab counts the schedules; one-off sends alone leave nothing to say about "on".
+  const line = [recurring.length > 0 ? u.stats.on(on, recurring.length) : '', u.stats.today(today)].filter(Boolean).join(' · ')
   return (
-    <Row gap="xs" wrap>
-      <Badge>{u.stats.schedules(recurring.length)}</Badge>
-      <Badge tone="success">{u.stats.on(recurring.filter((s) => s.enabled).length)}</Badge>
-      {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
-      {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
-      {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
-      <Badge>{u.stats.today(today)}</Badge>
-    </Row>
+    <Stack gap="xs">
+      <Text size="xs" muted>
+        {line}
+      </Text>
+      {waiting + running + attention > 0 ? (
+        <Row gap="xs" wrap>
+          {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
+          {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
+          {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
+        </Row>
+      ) : null}
+    </Stack>
   )
 }
 

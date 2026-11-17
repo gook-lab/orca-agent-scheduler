@@ -2,6 +2,10 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.11.2 — 2026-11-17
+
+- **The counts on top are a line of words**: `4 of 4 on · 2 runs today`. They were pills (`4 schedules`, `4 on`, `2 runs today`) that looked like filters and did nothing when pressed, and `4 schedules` repeated the tab's own count. Badges are left for what is out of the ordinary — waiting, running, need attention — and show only then.
+
 ## 0.11.1 — 2026-11-17
 
 - **The favorite star shows that it is on.** It was the same outline star either way: Orca's ghost buttons ignore their tone, so the accent meant to mark a favorite never showed, and with a single terminal block there was no order to change either — a press looked like it did nothing. It is now ☆ when off and ★ when on.

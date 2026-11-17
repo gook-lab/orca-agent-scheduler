@@ -241,8 +241,7 @@ const en = {
     undo: 'Undo',
     waitingToSend: 'Waiting to send',
     stats: {
-      schedules: (n: number) => (n === 1 ? '1 schedule' : `${n} schedules`),
-      on: (n: number) => `${n} on`,
+      on: (on: number, all: number) => `${on} of ${all} on`,
       waiting: (n: number) => `${n} waiting`,
       running: (n: number) => `${n} running`,
       attention: (n: number) => `${n} need attention`,
@@ -487,8 +486,7 @@ const ko: Words = {
     undo: '되돌리기',
     waitingToSend: '보내기 대기',
     stats: {
-      schedules: (n) => `예약 ${n}`,
-      on: (n) => `켜짐 ${n}`,
+      on: (on, all) => `켜짐 ${on}/${all}`,
       waiting: (n) => `대기 ${n}`,
       running: (n) => `실행 중 ${n}`,
       attention: (n) => `확인 필요 ${n}`,

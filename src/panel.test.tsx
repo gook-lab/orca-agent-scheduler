@@ -215,7 +215,7 @@ test("language — Orca's by default, or the one picked in Settings; stored for 
   await again.unmount()
 })
 
-test('counts on top — schedules, on, waiting, attention, runs today — and what runs next', async () => {
+test('on top: how many are on and ran today, in words; badges only for waiting, running, need attention', async () => {
   const view = await mount(panel, { host: host() })
   const morning: Schedule = {
     ...blankSchedule('s1'),
@@ -237,7 +237,16 @@ test('counts on top — schedules, on, waiting, attention, runs today — and wh
   }
   const off: Schedule = { ...blankSchedule('s3'), name: 'Paused', terminal: { ...open[1] }, enabled: false }
   await view.post('schedules.changed', { schedules: [morning, stuck, off] })
-  for (const text of ['3 schedules', '2 on', '1 waiting', '1 need attention', '1 run today']) assert.ok(view.find({ text }), text)
+  // Words, not pills: drawn as badges all the time, the counts read as filters and did nothing when pressed.
+  assert.ok(view.find({ type: 'Text', text: '2 of 3 on · 1 run today' }))
+  const badges = (): string[] => view.findAll({ type: 'Badge' }).map((e) => e.text)
+  assert.equal(badges().some((x) => / on$|runs? today$|schedules?$/.test(x)), false, 'the tab already counts the schedules')
+  for (const text of ['1 waiting', '1 need attention']) assert.ok(badges().includes(text), text)
+  assert.equal(words('ko').ui.stats.on(4, 4), '켜짐 4/4')
+  await view.post('schedules.changed', { schedules: [morning, off] })
+  assert.ok(view.find({ type: 'Text', text: '1 of 2 on · 1 run today' }))
+  assert.equal(badges().some((x) => /waiting$|running$|need attention$/.test(x)), false, 'nothing out of the ordinary — no badges')
+  await view.post('schedules.changed', { schedules: [morning, stuck, off] })
   assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 1, 'orange only for the one counted')
   assert.ok(view.find({ text: 'Next today 23:59 · Morning report' }))
   await view.unmount()
@@ -378,7 +387,7 @@ test('sent records sit folded under their terminal', async () => {
   }
   await view.post('schedules.changed', { schedules: [done] })
   assert.ok(titled(view, 'Collapsible', 'Sent 1 · last today 12:03'))
-  assert.ok(view.find({ text: '0 schedules' }), 'one-off sends are not counted as schedules')
+  assert.ok(view.find({ type: 'Text', text: '1 run today' }), 'a one-off send is a run, not a schedule — nothing to say about "on"')
   await view.unmount()
 })
 

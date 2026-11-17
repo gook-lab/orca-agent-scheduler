@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
 import {
+  asksReport,
   blankSchedule,
   inspectOnEvent,
   type Io,
@@ -12,6 +13,8 @@ import {
   type SendResult,
   tick
 } from './engine'
+import { noteText } from './i18n'
+import { reportToken } from './report'
 
 const rule = '──────────────────────────────'
 const idle = ['⏺ done', rule, '❯ ', rule]
@@ -225,6 +228,35 @@ test('two schedules on one terminal — one per check', async () => {
   assert.deepEqual(b.waitNote, { code: 'sameTerminal' })
 })
 
+test("a run waits while another schedule's run is still going in that terminal", async () => {
+  const a = sched({ id: 'a', nextRunAt: nine })
+  const b = sched({ id: 'b', name: 'Second', prompt: 'Second prompt', nextRunAt: nine + min })
+  const f = fakeIo()
+  const memory = newMemory()
+  await tick([a, b], f.io, memory, nine)
+  assert.equal(a.sentAt, nine)
+  // Two minutes on: no event came, the screen is still and the input box is empty — a's run is not closed yet.
+  await tick([a, b], f.io, memory, nine + 2 * min)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], "b's prompt would be read as the end of a's run")
+  assert.deepEqual(b.waitNote, { code: 'otherRun' })
+  // Quiet for finishedQuietMs: a's run is closed by the screen, and b goes out on the same check.
+  await tick([a, b], f.io, memory, nine + 4 * min)
+  assert.equal(a.history[0].status, 'done')
+  assert.deepEqual(f.sent, [
+    ['h1', 'Plan the day'],
+    ['h1', 'Second prompt']
+  ])
+  assert.equal(b.waitNote, null)
+})
+
+test("a run in another terminal does not hold this one back", async () => {
+  const a = sched({ id: 'a', sentAt: nine - min, terminal: { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'w1', workspace: 'docs', tabId: 'tab2', leafId: 'leaf2' } })
+  const b = sched({ id: 'b', nextRunAt: nine })
+  const f = fakeIo({ live: [term(), term({ handle: 'h2', title: 'Review', agent: 'codex', tabId: 'tab2', leafId: 'leaf2' })], screens: { h1: idle, h2: working } })
+  await tick([a, b], f.io, newMemory(), nine)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+})
+
 test('a failed send is recorded with the reason', async () => {
   const s = sched({ nextRunAt: nine })
   const f = fakeIo({ send: { error: 'terminal_handle_stale' } })
@@ -382,4 +414,130 @@ test('send once — goes out when idle, then never comes due again (no cron, so 
   await tick([s], f.io, newMemory(), nine + 24 * 60 * min)
   assert.equal(s.pendingSince, null, 'no times — nothing comes due')
   assert.equal(f.sent.length, 1)
+})
+
+test('a schedule that asks for a result sends the ask after the prompt, in the chosen language, with the run\'s tag', async () => {
+  for (const [lang, expect] of [
+    ['en', /^Plan the day When you finish, end your reply with one line in this form: \[result (\w{4}) STATUS\] one-line summary \[link\] URL \[end\]/],
+    ['ko', /^Plan the day 끝나면 답의 마지막 줄을 이 형식으로 적는다: \[result (\w{4}) STATUS\] 한 줄 요약 \[link\] URL \[end\]/]
+  ] as const) {
+    const s = sched({ nextRunAt: nine, report: true })
+    const f = fakeIo()
+    await tick([s], f.io, newMemory(), nine + 10_000, lang)
+    assert.match(f.sent[0][1], expect)
+    assert.equal(expect.exec(f.sent[0][1])?.[1], reportToken(nine + 10_000), 'the tag is the one the screen is read for')
+    assert.ok(!f.sent[0][1].includes('\n'), 'one line — a prompt typed on one line stays on one')
+  }
+})
+
+test('without the option nothing is added; a command (/…) never gets the ask', async () => {
+  const plain = sched({ nextRunAt: nine })
+  const command = sched({ nextRunAt: nine, report: true, prompt: '  /compact' })
+  const f = fakeIo()
+  await tick([plain], f.io, newMemory(), nine + 10_000)
+  await tick([command], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [
+    ['h1', 'Plan the day'],
+    ['h1', '  /compact']
+  ])
+  assert.equal(asksReport(command), false)
+})
+
+const resultScreen = (at: number, line: string) => ['❯ Plan the day', `⏺ ${line.replace('TAG', reportToken(at))}`, rule, '❯ ', rule]
+
+test('agent status — the result line on screen gives the run its status, summary and link', async () => {
+  const sentAt = nine + 10_000
+  const s = sched({ report: true, sentAt, sawWorking: true })
+  const f = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG ok] 3 PRs need review [link] https://example.com/pr/128 [end]') } })
+  const e = { terminalId: 'h1', state: 'done' as const, receivedAt: sentAt + 4 * min }
+  const seen = await inspectOnEvent([s], e, f.io)
+  assert.equal(seen.hold, false)
+  onAgentStatus([s], e, seen.reports)
+  assert.deepEqual(s.history[0], { at: sentAt + 4 * min, status: 'success', tookMs: 4 * min, summary: '3 PRs need review', link: 'https://example.com/pr/128' })
+  assert.equal(s.lastStatus, 'success')
+})
+
+test('agent status — a run the agent calls failed is failed and announced with what it said; skipped is skipped', async () => {
+  const sentAt = nine + 10_000
+  const failed = sched({ report: true, sentAt, sawWorking: true })
+  const f = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG failed] The build broke [end]') } })
+  // The turn itself ended well — it is the agent that says the work failed.
+  const e = { terminalId: 'h1', state: 'done' as const, receivedAt: sentAt + min, mainAgent: { state: 'done' as const, outcome: 'success', stateStartedAt: sentAt } }
+  const r = onAgentStatus([failed], e, (await inspectOnEvent([failed], e, f.io)).reports)
+  assert.equal(failed.history[0].status, 'failed')
+  assert.deepEqual(r.notices, [{ name: 'Morning', status: 'failed', summary: 'The build broke' }])
+
+  const skipped = sched({ report: true, sentAt, sawWorking: true })
+  const g = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG skipped] Nothing new [end]') } })
+  // Waiting for input with a result line — the agent finished; it is not asking anything.
+  const w = { terminalId: 'h1', state: 'waiting' as const, receivedAt: sentAt + min }
+  const q = onAgentStatus([skipped], w, (await inspectOnEvent([skipped], w, g.io)).reports)
+  assert.equal(skipped.history[0].status, 'skipped')
+  assert.equal(skipped.history[0].summary, 'Nothing new')
+  assert.deepEqual(q.notices, [])
+})
+
+test('agent status — a turn that was stopped stays stopped whatever the screen says; no line, no summary', async () => {
+  const sentAt = nine + 10_000
+  const stopped = sched({ report: true, sentAt, sawWorking: true })
+  const f = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG ok] Half done [end]') } })
+  const e = { terminalId: 'h1', state: 'done' as const, receivedAt: sentAt + min, mainAgent: { state: 'done' as const, outcome: 'interruption', stateStartedAt: sentAt } }
+  onAgentStatus([stopped], e, (await inspectOnEvent([stopped], e, f.io)).reports)
+  assert.equal(stopped.history[0].status, 'aborted')
+  assert.equal(stopped.history[0].summary, 'Half done')
+
+  const silent = sched({ report: true, sentAt, sawWorking: true })
+  const g = fakeIo()
+  const d = { terminalId: 'h1', state: 'done' as const, receivedAt: sentAt + min }
+  onAgentStatus([silent], d, (await inspectOnEvent([silent], d, g.io)).reports)
+  assert.deepEqual(silent.history[0], { at: sentAt + min, status: 'done', tookMs: min, note: { code: 'noLine' } }, 'asked, ended as usual, nothing on screen — the record says so')
+})
+
+test('a schedule that did not ask never reads a result off the screen', async () => {
+  const sentAt = nine + 10_000
+  const s = sched({ sentAt, sawWorking: true })
+  const f = fakeIo({ screens: { h1: resultScreen(sentAt, '[result TAG failed] Not mine [end]') } })
+  const e = { terminalId: 'h1', state: 'done' as const, receivedAt: sentAt + min }
+  const seen = await inspectOnEvent([s], e, f.io)
+  assert.equal(seen.reports.size, 0)
+  onAgentStatus([s], e, seen.reports)
+  assert.equal(s.history[0].status, 'done')
+  assert.equal(s.history[0].summary, undefined)
+})
+
+test('watch — a missed end event still reads the result line off the quiet screen', async () => {
+  const sentAt = nine
+  const s = sched({ report: true, sentAt, sawWorking: true })
+  const f = fakeIo({
+    live: [term({ lastOutputAt: sentAt + min })],
+    screens: { h1: resultScreen(sentAt, '[result TAG failed] Could not reach the server [end]') }
+  })
+  const r = await tick([s], f.io, newMemory(), sentAt + 5 * min)
+  assert.equal(s.sentAt, null)
+  assert.equal(s.history[0].status, 'failed')
+  assert.equal(s.history[0].summary, 'Could not reach the server')
+  assert.deepEqual(s.history[0].note, { code: 'byScreen' })
+  assert.deepEqual(r.notices, [{ name: 'Morning', status: 'failed', summary: 'Could not reach the server' }])
+})
+
+test('a run asked for a result that ends without the line says so in its record', async () => {
+  const sentAt = nine
+  // Ended by the quiet screen, no line on it.
+  const quiet = sched({ report: true, sentAt, sawWorking: true })
+  await tick([quiet], fakeIo({ live: [term({ lastOutputAt: sentAt + min })] }).io, newMemory(), sentAt + 5 * min)
+  assert.deepEqual([quiet.history[0].status, quiet.history[0].note], ['done', { code: 'byScreen', reason: 'noLine' }])
+  assert.equal(noteText('en', quiet.history[0].note!), 'by screen: no result line on screen')
+  assert.equal(noteText('ko', quiet.history[0].note!), '화면 기준 화면에 결과 줄이 없음')
+
+  // Stopped at a question — it has not got to the line yet; nothing is missing.
+  const asking = sched({ report: true, sentAt, sawWorking: true })
+  onAgentStatus([asking], { terminalId: 'h1', state: 'waiting', receivedAt: sentAt + min })
+  assert.deepEqual([asking.history[0].status, asking.history[0].note], ['doneWaiting', undefined])
+
+  // Not asked, or a command that never gets the ask — no line was due.
+  for (const over of [{ report: false }, { report: true, prompt: '/compact' }]) {
+    const s = sched({ ...over, sentAt, sawWorking: true })
+    onAgentStatus([s], { terminalId: 'h1', state: 'done', receivedAt: sentAt + min })
+    assert.deepEqual([s.history[0].status, s.history[0].note], ['done', undefined])
+  }
 })

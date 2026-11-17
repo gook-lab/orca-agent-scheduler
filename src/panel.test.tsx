@@ -1,24 +1,28 @@
 // `orca plugin test .` runs this with the same runtime and checks as Orca.
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
-import type { ScheduleDraft, TerminalOption } from './protocol'
+import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
 import { words } from './i18n'
 import * as panel from './panel'
+import { zoneText } from './timespec'
 
 const open: TerminalOption[] = [
   { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: 't1', leafId: 'l1' },
   { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'w2', workspace: 'toy', tabId: 't2', leafId: 'l2' }
 ]
 
-type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[] }
+type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][] }
 
 type HostOpts = {
   terminals?: TerminalOption[]
   storage?: Record<string, unknown>
+  /** What OrcaCron has to bring over; importing marks the asked ones as imported. */
+  orcaCron?: ImportList
 }
 
 function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
   const list = opts.terminals ?? open
+  let app: ImportList = opts.orcaCron ?? { found: false, dir: '~/.orca-cron', items: [] }
   return mockHost({
     // Past the introduction unless a test says otherwise.
     storage: { onboarded: true, ...opts.storage } as never,
@@ -41,6 +45,13 @@ function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
       'schedules.restore': (input) => {
         calls.restored?.push((input as { schedule: Schedule }).schedule)
         return (input as { schedule: Schedule }).schedule as never
+      },
+      'orcacron.list': () => app,
+      'orcacron.import': (input) => {
+        const ids = (input as { ids: string[] }).ids
+        calls.imported?.push(ids)
+        app = { ...app, items: app.items.map((i) => (ids.includes(i.id) ? { ...i, imported: true } : i)) }
+        return { added: ids.length }
       }
     }
   })
@@ -637,6 +648,11 @@ test('the empty list is one line and a button; how sending works opens under the
   await view.press({ text: 'How sending works' })
   assert.ok(titled(view, 'Callout', 'How sending works'))
   assert.ok(view.find({ text: rule }))
+  assert.deepEqual(
+    view.findAll({ type: 'Link' }).map((e) => [e.props.href, e.text]),
+    [['https://github.com/gook-lab/orca-agent-scheduler/releases', "What's new"]],
+    'and leads to what each version changed'
+  )
   await view.press({ text: 'Show the introduction again' })
   assert.ok(view.find({ label: 'Prompts on a schedule' }))
   await view.press({ text: 'Skip' })
@@ -795,5 +811,212 @@ test('Settings and the form open under a line; Claude Code is not a star in the 
   await view.press({ label: 'Settings' })
   assert.ok(view.find({ type: 'Separator' }))
   assert.equal(rootGap(), 'md')
+  await view.unmount()
+})
+
+test('a new schedule asks for a one-line result unless switched off; a one-off only when switched on', async () => {
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ saved }) })
+  await fillBasics(view)
+  const option = view.find({ type: 'Checkbox', label: 'Ask for a one-line result' })
+  assert.equal(option?.props.checked, true)
+  assert.match(String(option?.props.description), /how it went \(ok, failed or skipped\), a summary, and a link if there is one/, 'and says what it asks for')
+  await view.press({ text: 'Create schedule' })
+  assert.equal(saved[0].report, true)
+
+  await fillBasics(view)
+  await view.toggle({ label: 'Ask for a one-line result' })
+  await view.press({ text: 'Create schedule' })
+  assert.equal(saved[1].report, false)
+
+  await view.press({ type: 'IconButton', label: 'Send once' })
+  assert.equal(view.find({ label: 'Ask for a one-line result' }), null, 'under More options')
+  await view.press({ type: 'ListItem', label: 'Review' })
+  await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
+  await view.press({ text: 'Send' })
+  assert.equal(saved[2].report, false)
+
+  await view.press({ type: 'IconButton', label: 'Send once' })
+  await view.toggle(titled(view, 'Collapsible', 'More options')!)
+  await view.toggle({ label: 'Ask for a one-line result' })
+  await view.press({ type: 'ListItem', label: 'Review' })
+  await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
+  await view.press({ text: 'Send' })
+  assert.equal(saved[3].report, true)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('a record shows what the agent wrote — the summary, and the link by its address; editing keeps the option as saved', async () => {
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ saved }) })
+  const link = 'https://github.com/acme/notes/pull/128'
+  const asked: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'Morning report',
+    terminal: { ...open[0] },
+    prompt: 'Plan the day',
+    report: true,
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: 'success',
+    history: [
+      { at: Date.now() - 3600_000, status: 'success', tookMs: 4 * 60_000, summary: '3 PRs need review, 1 has a failing check', link },
+      { at: Date.now() - 86400_000, status: 'failed', tookMs: 60_000, summary: 'The build broke' }
+    ]
+  }
+  const silent: Schedule = { ...blankSchedule('s2'), name: 'Old one', terminal: { ...open[0] }, prompt: 'x', nextRunAt: Date.now() + 7200_000 }
+  await view.post('schedules.changed', { schedules: [asked, silent] })
+  const summary = view.find({ type: 'Text', text: '3 PRs need review, 1 has a failing check' })
+  assert.ok(summary)
+  assert.notEqual(summary.props.truncate, true, 'the whole sentence, wrapped')
+  const shown = view.findAll({ type: 'Link' })
+  assert.deepEqual(
+    shown.map((e) => [e.props.href, e.text]),
+    [[link, 'github.com/acme/notes/pull/128']],
+    'the link reads as where it leads; a record without one has none'
+  )
+  await view.toggle(titled(view, 'Collapsible', 'History (2)')!)
+  assert.ok(view.find({ type: 'Text', text: 'The build broke' }), 'older results under History')
+
+  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[0])
+  assert.equal(view.find({ label: 'Ask for a one-line result' })?.props.checked, true)
+  await view.press({ text: 'Cancel' })
+  await view.press(view.findAll({ type: 'IconButton', label: 'Edit' })[1])
+  assert.equal(view.find({ label: 'Ask for a one-line result' })?.props.checked, false, 'a schedule from before the option stays as it was')
+  await view.press({ text: 'Save' })
+  assert.equal(saved[0].report, false)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+const appList: ImportList = {
+  found: true,
+  dir: '~/.orca-cron',
+  items: [
+    { id: 'ledger', name: 'Ledger update', cron: '0 9 * * 1-5', terminal: { ...open[0] }, open: true, imported: false, badCron: false },
+    { id: 'night', name: 'Night tidy', cron: '0 3 * * *', terminal: { ...open[1], handle: 'gone', title: 'Closed one' }, open: false, imported: false, badCron: false },
+    { id: 'odd', name: 'Odd times', cron: 'whenever', terminal: { ...open[0] }, open: true, imported: false, badCron: true }
+  ]
+}
+
+test("Settings offers OrcaCron's schedules when the app's data is there — they come over switched off", async () => {
+  const imported: string[][] = []
+  const view = await mount(panel, { host: host({ imported }, { orcaCron: appList }) })
+  await view.press({ label: 'Settings' })
+  assert.ok(view.find({ text: 'Import from OrcaCron' }))
+  assert.ok(view.find({ text: /~\/\.orca-cron.*switched off.*goes out twice/ }), 'says where from, and why they arrive off')
+  assert.ok(view.find({ text: 'Weekdays 09:00 · Morning' }))
+  assert.ok(view.find({ text: 'Every day 03:00 · Closed one · not open' }))
+  assert.ok(view.find({ text: 'whenever · Morning' }))
+  assert.ok(view.find({ type: 'Badge', text: 'cannot import — times not understood' }))
+  await view.press({ text: 'Import 2 schedules' })
+  assert.deepEqual(imported, [['ledger', 'night']], 'the one whose times cannot be read is not asked for')
+  assert.match(String(titled(view, 'Callout', 'Imported 2 schedules, switched off')?.text), /Turn each one off in OrcaCron, then switch it on in the Schedules tab\.$/)
+  assert.equal(view.findAll({ type: 'Badge', text: 'imported' }).length, 2)
+  assert.equal(view.find({ type: 'Button', text: /^Import / }), null, 'nothing left to import')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('Settings says nothing about OrcaCron on a computer without it; all imported reads as done', async () => {
+  const none = await mount(panel, { host: host() })
+  await none.press({ label: 'Settings' })
+  assert.equal(none.find({ text: 'Import from OrcaCron' }), null)
+  await none.unmount()
+
+  const done: ImportList = { ...appList, items: appList.items.slice(0, 2).map((i) => ({ ...i, imported: true })) }
+  const view = await mount(panel, { host: host({}, { orcaCron: done }) })
+  await view.press({ label: 'Settings' })
+  assert.ok(view.find({ text: 'Everything is already imported.' }))
+  assert.equal(view.find({ type: 'Button', text: /^Import / }), null)
+  await view.unmount()
+
+  const ko = await mount(panel, { host: host({}, { orcaCron: appList, storage: { langPref: 'ko' } }) })
+  await ko.press({ label: '설정' })
+  assert.ok(ko.find({ text: 'OrcaCron 에서 가져오기' }))
+  assert.ok(ko.find({ text: '예약 2개 가져오기' }))
+  await ko.unmount()
+})
+
+test('a one-off send shows its result like a schedule does — how long, why it failed, the summary, the link', async () => {
+  const view = await mount(panel, { host: host() })
+  const once = (id: string, name: string, over: Partial<Schedule>): Schedule => ({ ...blankSchedule(id), once: true, name, terminal: { ...open[0] }, cron: '', ...over })
+  const done = once('o1', 'Summarise the open PRs', {
+    report: true,
+    lastStatus: 'success',
+    history: [{ at: at(12, 3), status: 'success', tookMs: 4 * 60_000, summary: '2 PRs wait for review', link: 'https://github.com/acme/notes/pulls' }]
+  })
+  const failed = once('o2', 'Deploy notes', { lastStatus: 'failed', history: [{ at: at(11, 0), status: 'failed', note: { code: 'sendFailed', detail: 'terminal_handle_stale' } }] })
+  const asking = once('o3', 'Pick a name', { lastStatus: 'doneWaiting', history: [{ at: at(10, 0), status: 'doneWaiting', tookMs: 60_000 }] })
+  await view.post('schedules.changed', { schedules: [done, failed, asking] })
+  await view.toggle(titled(view, 'Collapsible', 'Sent 3 · last today 12:03')!)
+  assert.ok(view.find({ type: 'Text', text: 'today 12:03 · took 4 min' }))
+  assert.ok(view.find({ type: 'Text', text: '2 PRs wait for review' }))
+  assert.deepEqual(
+    view.findAll({ type: 'Link' }).map((e) => [e.props.href, e.text]),
+    [['https://github.com/acme/notes/pulls', 'github.com/acme/notes/pulls']]
+  )
+  assert.ok(view.find({ type: 'Text', text: 'today 11:00 · Send failed: terminal_handle_stale' }), 'why a send failed stays with it')
+  assert.equal(view.find({ type: 'Badge', text: 'Done (awaiting input)' })?.props.tone, 'warning', 'stopped at a question — a person is needed, so not green')
+  assert.equal(view.find({ type: 'Badge', text: 'Succeeded' })?.props.tone, 'success')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('a search opens a folded block and its sent group to show what it found; the fold is back when the search is cleared', async () => {
+  const view = await mount(panel, { host: host() })
+  const s: Schedule = { ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] }, nextRunAt: at(9, 0, 1) }
+  const sent: Schedule = { ...blankSchedule('o1'), once: true, name: 'Summarise the open PRs', terminal: { ...open[0] }, cron: '', lastStatus: 'done', history: [{ at: at(12, 3), status: 'done' }] }
+  await view.post('schedules.changed', { schedules: [s, sent] })
+  await view.press({ label: 'Collapse' })
+  assert.equal(view.find({ label: 'Morning report' }), null)
+  await view.type({ label: 'Find' }, 'morning')
+  assert.ok(view.find({ label: 'Morning report' }), 'found inside the folded block')
+  await view.type({ label: 'Find' }, 'summarise', { replace: true })
+  assert.ok(view.find({ type: 'Text', text: 'Summarise the open PRs' }), 'and inside its folded sent group')
+  await view.type({ label: 'Find' }, ' ', { replace: true })
+  assert.equal(view.find({ label: 'Morning report' }), null, 'folded as it was')
+  assert.ok(view.find({ text: '1 schedule · next tomorrow 09:00' }))
+  await view.unmount()
+})
+
+test('History shows every record it counts; a long site name is shown whole in a link', async () => {
+  const view = await mount(panel, { host: host() })
+  const site = `docs.${'a'.repeat(60)}.example`
+  const history = Array.from({ length: 12 }, (_, i) => ({ at: Date.now() - (i + 1) * 3600_000, status: 'success' as const, summary: `run ${i + 1}`, ...(i === 0 ? { link: `https://${site}/${'p'.repeat(80)}` } : {}) }))
+  const s: Schedule = { ...blankSchedule('s1'), name: 'Hourly', terminal: { ...open[0] }, lastStatus: 'success', history }
+  await view.post('schedules.changed', { schedules: [s] })
+  await view.toggle(titled(view, 'Collapsible', 'History (12)')!)
+  assert.equal(view.findAll({ type: 'Text', text: /^run \d+$/ }).length, 13, 'the newest above, then all twelve')
+  const shown = view.findAll({ type: 'Link' })[0].text
+  assert.ok(shown.startsWith(`${site}/ppp`) && shown.endsWith('…'), 'the site is never the part cut off')
+  await view.unmount()
+})
+
+test('the form says which clock the times are on, and that a command gets no result ask', async () => {
+  const view = await mount(panel, { host: host() })
+  await fillBasics(view)
+  assert.ok(view.find({ type: 'Text', text: `Times are this computer's local time (${zoneText()}).` }))
+  assert.match(String(view.find({ label: 'Ask for a one-line result' })?.props.description), /^Adds a sentence/)
+  await view.type({ label: 'Prompt' }, '  /compact', { replace: true })
+  assert.match(String(view.find({ label: 'Ask for a one-line result' })?.props.description), /^Not added to a prompt that starts with \//)
+  await view.press({ text: 'Cancel' })
+  await view.press({ text: 'Discard' })
+  await view.press({ label: 'Settings' })
+  await view.select({ label: 'Language' }, 'ko')
+  await view.press({ label: '닫기' })
+  await view.press({ type: 'IconButton', label: '새 예약' })
+  assert.ok(view.find({ type: 'Text', text: `시각은 이 컴퓨터의 현지 시각입니다(${zoneText()}).` }))
+  await view.unmount()
+})
+
+test('OrcaCron — when what is left cannot be imported, it does not say everything was', async () => {
+  const stuck: ImportList = { ...appList, items: [{ ...appList.items[0], imported: true }, appList.items[2]] }
+  const view = await mount(panel, { host: host({}, { orcaCron: stuck }) })
+  await view.press({ label: 'Settings' })
+  assert.ok(view.find({ type: 'Badge', text: 'cannot import — times not understood' }))
+  assert.equal(view.find({ text: 'Everything is already imported.' }), null)
+  assert.equal(view.find({ type: 'Button', text: /^Import / }), null)
+  assert.ok(view.find({ text: /limit on late runs does not come over/ }), 'what the copy leaves behind is said before importing')
   await view.unmount()
 })

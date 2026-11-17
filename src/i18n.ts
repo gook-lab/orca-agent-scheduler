@@ -1,5 +1,6 @@
 // Panel, notification and history text in English (default) and Korean. Records keep codes, not
 // sentences, so switching the language redraws past runs too.
+import { reportForm } from './report'
 
 export type Lang = 'en' | 'ko'
 
@@ -35,6 +36,7 @@ export type NoteCode =
   | 'cleared'
   | 'previous'
   | 'sameTerminal'
+  | 'otherRun'
   | 'person'
   | 'stuckTyping'
   | 'stuckNoPrompt'
@@ -45,6 +47,7 @@ export type NoteCode =
   | 'clearFailed'
   | 'waitedOut'
   | 'notStarted'
+  | 'noLine'
 
 export type Note = { code: NoteCode; reason?: NoteCode; detail?: string }
 
@@ -56,7 +59,7 @@ const en = {
     doneWaiting: 'Done (awaiting input)',
     failed: 'Failed',
     aborted: 'Stopped',
-    noResult: 'No result',
+    noResult: 'Timed out',
     skipped: 'Skipped'
   } as Record<Status, string>,
   note: {
@@ -72,6 +75,7 @@ const en = {
     cleared: 'Sent /clear — sending once the screen settles',
     previous: 'Previous run still going — sends when it ends',
     sameTerminal: 'Another schedule just sent to this terminal — next check',
+    otherRun: "Another schedule's run is still going in this terminal — sends when it ends",
     person: 'Stopped at a permission or question dialog — check the terminal',
     stuckTyping: 'Stopped with text left in the input box — check the terminal',
     stuckNoPrompt: 'Stopped without a visible input box — check the terminal',
@@ -81,12 +85,16 @@ const en = {
     sendFailed: 'Send failed',
     clearFailed: '/clear failed',
     waitedOut: 'Waited 60 min',
-    notStarted: 'Turn start not confirmed'
+    notStarted: 'Turn start not confirmed',
+    noLine: 'No result line on screen'
   } as Record<NoteCode, string>,
   took: (min: string) => `took ${min}`,
   late: (span: string) => `sent ${span} late`,
   minutes: (m: number) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`),
   awaitingAnswer: 'Waiting for an answer — check the terminal',
+  /** Added to the end of a prompt whose schedule asks for a result (src/report.ts reads the line back). */
+  reportAsk: (token: string) =>
+    `When you finish, end your reply with one line in this form: ${reportForm(token, 'one-line summary')} — STATUS is ok, failed or skipped; leave out "[link] URL" when there is no link.`,
   ui: {
     newSchedule: 'New schedule',
     editSchedule: 'Edit schedule',
@@ -94,7 +102,7 @@ const en = {
     emptyDescription: 'Press + on a terminal in the Terminals tab to start.',
     openTerminals: 'Open Terminals',
     footer:
-      'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped. A run that fell due while the computer slept or Orca was closed still goes out once, marked late.',
+      'Checks every 30 seconds while Orca is running. A prompt goes out only when the terminal has been quiet for a minute with an empty input box; after 60 minutes of waiting the run is skipped. A run that fell due while the computer slept or Orca was closed still goes out once, marked late. Times are this computer\'s local time.',
     language: 'Language',
     name: 'Name',
     namePlaceholder: 'Morning report',
@@ -115,6 +123,9 @@ const en = {
     refreshTerminals: 'Reload terminals',
     clearFirst: 'Start a new conversation (send /clear first)',
     clearFirstHint: 'Only on a terminal kept for this schedule — /clear erases its conversation.',
+    report: 'Ask for a one-line result',
+    reportHint: 'Adds a sentence to the prompt asking the agent to end with one line: how it went (ok, failed or skipped), a summary, and a link if there is one. They show with the run.',
+    reportNotOnCommand: 'Not added to a prompt that starts with / — a command goes out as it is, and no result is read.',
     days: 'Days',
     dayChoice: {
       everyDay: 'Every day',
@@ -125,6 +136,7 @@ const en = {
       cron: 'Cron'
     } as Record<string, string>,
     time: 'Time',
+    clock: (zone: string) => `Times are this computer's local time (${zone}).`,
     pattern: { times: 'At set times', every: 'Repeat' } as Record<string, string>,
     timeN: (n: number) => `Time ${n}`,
     addTime: 'Add time',
@@ -139,7 +151,7 @@ const en = {
     nextMonth: 'Next month',
     picked: (n: number) => (n === 1 ? '1 date picked' : `${n} dates picked`),
     prompt: 'Prompt',
-    promptPlaceholder: 'The agent in that terminal reads and runs this as is',
+    promptPlaceholder: 'What the agent in that terminal should do',
     create: 'Create schedule',
     save: 'Save',
     cancel: 'Cancel',
@@ -184,6 +196,19 @@ const en = {
     langAuto: (name: string) => `Same as Orca (${name})`,
     help: 'How sending works',
     showIntro: 'Show the introduction again',
+    whatsNew: "What's new",
+    importer: {
+      title: 'Import from OrcaCron',
+      hint: (dir: string) =>
+        `Copies the schedules of the menubar app OrcaCron (${dir}). They arrive switched off: turn each one off in OrcaCron, then on here — while both are on, the prompt goes out twice. The app's limit on late runs does not come over: here a run missed while the computer slept still goes out once.`,
+      button: (n: number) => (n === 1 ? 'Import 1 schedule' : `Import ${n} schedules`),
+      done: (n: number) => (n === 1 ? 'Imported 1 schedule, switched off' : `Imported ${n} schedules, switched off`),
+      doneHint: 'Turn each one off in OrcaCron, then switch it on in the Schedules tab.',
+      imported: 'imported',
+      badCron: 'cannot import — times not understood',
+      nothing: 'Everything is already imported.',
+      failed: 'Could not import'
+    },
     intro: {
       steps: [
         {
@@ -232,7 +257,7 @@ const en = {
     tomorrow: 'tomorrow'
   },
   error: {
-    times: 'Check the time fields (e.g. 09:00)',
+    times: 'Check the time fields (e.g. 09:00, 21:30 or 9:30 pm)',
     tooManyTimes: 'Up to 24 times — use Repeat for more',
     noDays: 'Pick at least one day',
     noDates: 'Pick at least one date on the calendar',
@@ -269,7 +294,7 @@ const ko: Words = {
     doneWaiting: '끝남(입력 대기)',
     failed: '실패',
     aborted: '중단',
-    noResult: '결과 없음',
+    noResult: '시간 초과',
     skipped: '건너뜀'
   },
   note: {
@@ -285,6 +310,7 @@ const ko: Words = {
     cleared: '대화를 비웠음(/clear) — 화면이 조용해지면 보냄',
     previous: '지난 회차가 아직 실행 중 — 끝나면 보냄',
     sameTerminal: '같은 터미널에 다른 예약을 막 보내 다음 확인 때 보냄',
+    otherRun: '같은 터미널에서 다른 예약의 회차가 아직 실행 중 — 끝나면 보냄',
     person: '권한·질문 창에서 멈춤 — 그 터미널을 확인해 주세요',
     stuckTyping: '입력 칸에 글이 남은 채 멈춤 — 그 터미널을 확인해 주세요',
     stuckNoPrompt: '입력 칸이 보이지 않은 채 멈춤 — 그 터미널을 확인해 주세요',
@@ -294,12 +320,15 @@ const ko: Words = {
     sendFailed: '보내기 실패',
     clearFailed: '대화 비우기(/clear) 실패',
     waitedOut: '60분 동안',
-    notStarted: '시작 미확인'
+    notStarted: '시작 미확인',
+    noLine: '화면에 결과 줄이 없음'
   },
   took: (min) => `걸린 시간 ${min}`,
   late: (span) => `${span} 늦게 보냄`,
   minutes: (m) => (m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`),
   awaitingAnswer: '질문·확인을 기다리며 멈춤 — 그 터미널을 확인해 주세요',
+  reportAsk: (token) =>
+    `끝나면 답의 마지막 줄을 이 형식으로 적는다: ${reportForm(token, '한 줄 요약')} — STATUS 는 ok · failed · skipped 중 하나, 링크가 없으면 「[link] URL」은 뺀다.`,
   ui: {
     newSchedule: '새 예약',
     editSchedule: '예약 고치기',
@@ -307,7 +336,7 @@ const ko: Words = {
     emptyDescription: '「터미널」 탭에서 터미널 줄의 + 를 눌러 시작하세요.',
     openTerminals: '터미널 보기',
     footer:
-      'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다. 컴퓨터가 자거나 Orca 가 꺼져 있어 놓친 회차는 다시 켜진 뒤 한 번 보내고 「늦게 보냄」으로 남깁니다.',
+      'Orca 가 켜져 있는 동안 30초마다 확인합니다. 터미널 화면이 1분 동안 조용하고 입력 칸이 비었을 때만 보내고, 60분을 기다려도 안 되면 그 회차는 건너뜁니다. 컴퓨터가 자거나 Orca 가 꺼져 있어 놓친 회차는 다시 켜진 뒤 한 번 보내고 「늦게 보냄」으로 남깁니다. 시각은 이 컴퓨터의 현지 시각입니다.',
     language: '언어',
     name: '이름',
     namePlaceholder: '아침 리포트 정리',
@@ -328,16 +357,20 @@ const ko: Words = {
     refreshTerminals: '터미널 다시 읽기',
     clearFirst: '새 대화로 시작(/clear 먼저 보냄)',
     clearFirstHint: '이 예약만 쓰는 터미널에서만 켜세요 — /clear 는 그 터미널의 대화를 지웁니다.',
+    report: '끝나면 결과 한 줄 받기',
+    reportHint: '보낼 글 끝에, 마지막 줄에 상태(ok · failed · skipped)와 한 줄 요약, 링크가 있으면 링크를 적어 달라는 문장을 붙입니다. 그 줄을 실행 기록에 보여 줍니다.',
+    reportNotOnCommand: '/ 로 시작하는 글(명령)에는 붙이지 않습니다 — 그대로 보내고 결과도 읽지 않습니다.',
     days: '요일',
     dayChoice: {
       everyDay: '매일',
       weekdays: '평일',
-      weekends: '휴일(토·일)',
+      weekends: '주말(토·일)',
       pick: '요일 고르기',
       dates: '날짜 지정',
       cron: 'cron 직접'
     },
     time: '시각',
+    clock: (zone) => `시각은 이 컴퓨터의 현지 시각입니다(${zone}).`,
     pattern: { times: '정한 시각', every: '반복' },
     timeN: (n) => `시각 ${n}`,
     addTime: '시각 추가',
@@ -352,7 +385,7 @@ const ko: Words = {
     nextMonth: '다음 달',
     picked: (n) => `${n}일 고름`,
     prompt: '보낼 글',
-    promptPlaceholder: '그 터미널의 에이전트가 그대로 읽고 실행합니다',
+    promptPlaceholder: '그 터미널의 에이전트에게 시킬 일',
     create: '예약 만들기',
     save: '저장',
     cancel: '취소',
@@ -395,6 +428,19 @@ const ko: Words = {
     langAuto: (name) => `Orca 와 같게(${name})`,
     help: '보내는 방식',
     showIntro: '소개 다시 보기',
+    whatsNew: '업데이트 내역',
+    importer: {
+      title: 'OrcaCron 에서 가져오기',
+      hint: (dir) =>
+        `메뉴바 앱 OrcaCron(${dir})의 예약을 복사합니다. 꺼진 채로 들어오니, OrcaCron 에서 그 예약을 끈 뒤 여기서 켜세요 — 둘 다 켜져 있으면 같은 글이 두 번 나갑니다. 앱의 「늦으면 건너뜀」 한도는 넘어오지 않습니다: 여기서는 컴퓨터가 자는 동안 놓친 회차를 한 번 보냅니다.`,
+      button: (n) => `예약 ${n}개 가져오기`,
+      done: (n) => `예약 ${n}개를 꺼진 채로 가져왔습니다`,
+      doneHint: 'OrcaCron 에서 그 예약을 끈 뒤 「예약」 탭에서 켜세요.',
+      imported: '가져옴',
+      badCron: '가져올 수 없음 — 시각을 읽지 못함',
+      nothing: '모두 이미 가져왔습니다.',
+      failed: '가져오지 못했습니다'
+    },
     intro: {
       steps: [
         {
@@ -480,7 +526,7 @@ export const statusText = (lang: Lang, status: Status): string => all[lang].stat
 export function noteText(lang: Lang, note: Note): string {
   const w = all[lang]
   const base = w.note[note.code] ?? note.code
-  if (note.code === 'waitedOut' && note.reason) {
+  if (note.reason) {
     return lang === 'ko' ? `${base} ${w.note[note.reason]}` : `${base}: ${w.note[note.reason].toLowerCase()}`
   }
   return note.detail ? `${base}: ${note.detail}` : base

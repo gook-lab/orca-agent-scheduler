@@ -16,6 +16,7 @@ const base = {
   prompt: 'Plan the day',
   enabled: true,
   clearFirst: false,
+  report: false,
   once: false,
   pendingSince: null,
   waitNote: null,
@@ -94,6 +95,19 @@ const open = schedules.map((s): Schedule =>
 const caughtUp = open.map((s): Schedule =>
   s.id === 's1' ? { ...s, history: [{ at: now - 30 * 60_000, status: 'done', tookMs: 4 * 60_000, lateMs: 192 * 60_000 }] } : s
 )
+// A run that was asked for a result: what the agent wrote sits under its record, with the link.
+const withResult = open.map((s): Schedule =>
+  s.id === 's1'
+    ? {
+        ...s,
+        report: true,
+        lastStatus: 'success',
+        history: [
+          { at: now - 30 * 60_000, status: 'success', tookMs: 4 * 60_000, summary: '3 PRs need review, 1 has a failing check', link: 'https://github.com/acme/notes/pull/128' }
+        ]
+      }
+    : s
+)
 const terminals = schedules.slice(0, 3).map((s) => s.terminal)
 const answered = (list: Schedule[]) => ({
   'schedules.list': () => list,
@@ -106,6 +120,7 @@ export default defineCheck({
   empty: { results, storage: { onboarded: true } },
   open: { results, storage: { onboarded: true }, requests: answered(open) },
   late: { results, storage: { onboarded: true }, requests: answered(caughtUp) },
+  result: { results, storage: { onboarded: true }, requests: answered(withResult) },
   busy: { results, storage: { onboarded: true, schedules } },
   korean: { results, storage: { onboarded: true, langPref: 'ko' }, requests: answered(caughtUp) }
 })

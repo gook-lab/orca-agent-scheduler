@@ -1,5 +1,5 @@
-// 터미널 화면 끝을 읽어 입력 칸이 비었는지, 권한 창이 떠 있는지 본다.
-// OrcaCron 앱(Sources/SchedulerCore/Terminals.swift)과 같은 규칙 — 에이전트마다 입력 칸 모양이 다르다.
+// Reads the end of a terminal screen: is the input box empty, is a permission dialog open.
+// The same rules as the OrcaCron app (Sources/SchedulerCore/Terminals.swift) — each agent draws its input box differently.
 
 export type PromptState = 'empty' | 'typing' | 'unknown'
 export type AgentKind = 'claude' | 'codex' | 'gemini'
@@ -22,14 +22,14 @@ export function promptState(lines: string[], agent: AgentKind = 'claude'): Promp
   return claudePrompt(lines)
 }
 
-/** 화면 맨 아래 빈 줄을 뗀다. */
+/** Drops the empty lines at the bottom of the screen. */
 function trimmedTail(lines: string[]): string[] {
   const out = [...lines]
   while (out.length > 0 && trimSpaces(out[out.length - 1]) === '') out.pop()
   return out
 }
 
-/** 입력 칸 위의 가로줄 — 줄 대부분이 가로선 글자이고 10자 이상. */
+/** The rule above the input box — at least 10 characters, most of them line-drawing. */
 function isRule(line: string): boolean {
   const t = [...trimSpaces(line)]
   if (t.length < 10) return false
@@ -37,7 +37,7 @@ function isRule(line: string): boolean {
   return n / t.length >= 0.8
 }
 
-/** Claude Code — 가로줄 바로 아래 `❯` 줄. 빈 칸의 흐린 예시 문구는 `❯` 뒤에 NBSP 가 붙는다. */
+/** Claude Code — the `❯` line right under the rule. In an empty box the dimmed example text follows `❯` after an NBSP. */
 function claudePrompt(lines: string[]): PromptState {
   if (lines.length < 2) return 'unknown'
   for (let i = lines.length - 1; i >= 1; i--) {
@@ -45,7 +45,7 @@ function claudePrompt(lines: string[]): PromptState {
     const mark = line[0]
     if (!mark || !'❯›>'.includes(mark)) continue
     if (!isRule(lines[i - 1])) {
-      // `>` 는 출력(인용 등)에도 흔해 가로줄 아래가 아니면 넘어간다. `❯`·`›` 는 질문·권한 창의 선택 표시다.
+      // `>` is common in output (quotes), so one not under the rule is passed by. `❯` and `›` there mark a choice in a question or permission dialog.
       if (mark === '>') continue
       return 'unknown'
     }
@@ -59,7 +59,7 @@ function claudePrompt(lines: string[]): PromptState {
 
 const codexPlaceholders = new Set(['Ask Codex to do anything', 'Ask a follow-up question'])
 
-/** Codex(0.166) — 화면 끝 몇 줄 안의 마지막 `›` 줄. 지나간 대화의 사용자 글도 `›` 로 시작한다. 선택 창은 `› 1. Yes, proceed`. */
+/** Codex (0.166) — the last `›` line within the final few lines. Earlier user turns start with `›` too. A choice dialog reads `› 1. Yes, proceed`. */
 function codexPrompt(lines: string[]): PromptState {
   const tail = trimmedTail(lines).slice(-6)
   let i = -1
@@ -73,7 +73,7 @@ function codexPrompt(lines: string[]): PromptState {
   return 'typing'
 }
 
-/** Gemini CLI — 둥근 상자 안의 `> ` 줄. `! ` 는 셸 모드라 보내지 않는다. */
+/** Gemini CLI — the `> ` line inside the rounded box. `! ` is shell mode, so nothing is sent. */
 function geminiPrompt(lines: string[]): PromptState {
   const tail = trimmedTail(lines).slice(-12).reverse()
   for (const line of tail) {
@@ -92,8 +92,9 @@ function geminiPrompt(lines: string[]): PromptState {
 const questions = ['Do you want to', 'Would you like to', 'Allow execution', 'Apply this change?']
 const yesWords = ['Yes, proceed', 'Yes, just this once', 'Yes, allow once']
 
-/** 권한·질문 창이 화면 끝에 떠 있는지 — 묻는 줄과 「예」 선택지가 함께 있거나, Claude Code 의 선택 창 안내
- *  (`Enter to select · ↑/↓ to navigate`, 질문 도구 실화면 2026-11-13)가 화면 맨 끝에 보이면. */
+/** Whether a permission or question dialog is open at the end of the screen — a line that asks together
+ *  with a "yes" choice, or Claude Code's choice hint (`Enter to select · ↑/↓ to navigate`, seen on the
+ *  question tool's screen 2026-11-13) on the last lines. */
 export function permissionPrompt(lines: string[]): boolean {
   const recent = lines.slice(-30).map((l) => l.replace(/^[ │| ]+|[ │| ]+$/g, ''))
   if (trimmedTail(recent).slice(-2).some((l) => l.startsWith('Enter to select'))) return true

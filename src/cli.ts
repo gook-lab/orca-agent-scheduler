@@ -88,8 +88,10 @@ export function holdAgents(
   })
 }
 
-/** Type the text and press Enter, then watch up to 8 s for the agent to start a turn (never resends). */
-export const sendArgs = (handle: string, text: string): string[] => ['terminal', 'send', '--terminal', handle, '--text', text, '--enter', '--wait-submit', '8']
+/** Type the text and press Enter, then watch up to 8 s for the agent to start a turn (never resends).
+ *  Values go as `--flag=value`: given apart, a prompt that starts with `--` is read as another flag
+ *  ("Unknown flag", or the help text for `--help`) and never reaches the terminal. */
+export const sendArgs = (handle: string, text: string): string[] => ['terminal', 'send', `--terminal=${handle}`, `--text=${text}`, '--enter', '--wait-submit', '8']
 
 /** `result.send.prompt.stages` holds `turn_started` once the agent was seen starting the turn (Orca 1.4.25x). */
 export function sentFrom(r: CliResult): SendResult {

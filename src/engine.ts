@@ -4,7 +4,8 @@
 // "terminal is outside the active worktree"). Screen reads, sends and the live terminal list come
 // in through Io so tests can swap them.
 import { nextRun, parseCron } from './cron'
-import type { Note, NoteCode, Status } from './i18n'
+import { type Lang, type Note, type NoteCode, type Status, words } from './i18n'
+import { readReport, type Report, reportToken } from './report'
 import { agentKind, permissionPrompt, promptState } from './screen'
 
 export type RunRecord = {
@@ -15,6 +16,9 @@ export type RunRecord = {
   /** Sent this long after it fell due. Set only past limits.maxWaitMs — a waiting run is skipped by then, so
    *  only checks that did not run (the computer asleep, Orca closed) get a run here. */
   lateMs?: number
+  /** What the agent wrote in its result line (Schedule.report). */
+  summary?: string
+  link?: string
 }
 
 /** The terminal a schedule sends to. Handles change when Orca restarts; the pane (leaf) id does not. */
@@ -51,6 +55,8 @@ export type Schedule = {
   enabled: boolean
   /** Send /clear before the prompt so every run starts a new conversation. */
   clearFirst: boolean
+  /** Ask the agent to end with a result line, and keep its summary and link with the run (src/report.ts). */
+  report: boolean
   /** Send once — no times; due when saved, then kept as a record of what was sent. */
   once: boolean
   nextRunAt: number | null
@@ -113,6 +119,7 @@ export function blankSchedule(id: string): Schedule {
     prompt: '',
     enabled: true,
     clearFirst: false,
+    report: false,
     once: false,
     nextRunAt: null,
     pendingSince: null,
@@ -132,9 +139,13 @@ export function nextAfter(cron: string, now: number): number | null {
   return rules ? (nextRun(rules, new Date(now))?.getTime() ?? null) : null
 }
 
-/** The open terminal a schedule points at — by handle, or by pane after Orca restarted. */
-export function locate(ref: TerminalRef, live: LiveTerminal[]): LiveTerminal | null {
-  return live.find((t) => t.handle === ref.handle) ?? (ref.leafId ? live.find((t) => t.leafId === ref.leafId) : undefined) ?? null
+type Pane = Pick<TerminalRef, 'handle' | 'leafId'>
+
+/** The open terminal a reference points at — by handle, or by pane after Orca restarted. */
+export function locate<T extends Pane>(ref: Pane, live: T[]): T | null {
+  return (
+    (ref.handle ? live.find((t) => t.handle === ref.handle) : undefined) ?? (ref.leafId ? live.find((t) => t.leafId === ref.leafId) : undefined) ?? null
+  )
 }
 
 /** Follow the terminal to its current handle, title and agent. */
@@ -151,27 +162,46 @@ function record(s: Schedule, r: RunRecord): void {
   s.lastStatus = r.status
 }
 
-function finish(s: Schedule, now: number, status: Status, note?: Note): void {
+/** A prompt that starts with `/` is a command of the agent — text after it would be read as its arguments. */
+export const asksReport = (s: Pick<Schedule, 'report' | 'prompt'>): boolean => s.report && !s.prompt.trimStart().startsWith('/')
+
+/** The result line of the run now in flight, if the screen shows one. */
+function reportOn(s: Schedule, lines: string[]): Report | null {
+  return s.sentAt !== null && asksReport(s) ? readReport(lines, reportToken(s.sentAt)) : null
+}
+
+/** Ends the run in flight and records it; returns the status recorded. `ended` is how the turn ended. */
+function finish(s: Schedule, now: number, ended: Status, endNote?: Note, report?: Report | null): Status {
+  // The result line decides the status only of a run that ended normally — one that failed or was stopped stays so.
+  const status = report && (ended === 'done' || ended === 'success' || ended === 'doneWaiting') ? report.status : ended
+  // The line was asked for and the run ended as usual, yet no line was on screen — say so, or the record
+  // reads the same as one that was never asked. A run that stopped at a question has not got to it.
+  const noLine = !report && asksReport(s) && (status === 'done' || status === 'success')
+  const note: Note | undefined = noLine ? (endNote ? { ...endNote, reason: 'noLine' } : { code: 'noLine' }) : endNote
   record(s, {
     at: now,
     status,
     ...(s.sentAt !== null ? { tookMs: now - s.sentAt } : {}),
     ...(note ? { note } : {}),
-    ...(s.lateMs !== null ? { lateMs: s.lateMs } : {})
+    ...(s.lateMs !== null ? { lateMs: s.lateMs } : {}),
+    ...(report?.summary ? { summary: report.summary } : {}),
+    ...(report?.link ? { link: report.link } : {})
   })
   s.sentAt = null
   s.lateMs = null
   s.sawWorking = false
   s.blocked = null
+  return status
 }
 
 /** Something a person should hear about; the worker words it in the chosen language. */
-export type Notice = { name: string; status?: Status; note?: Note; lateMs?: number }
+export type Notice = { name: string; status?: Status; note?: Note; lateMs?: number; summary?: string }
 
 export type TickResult = { log: string[]; notices: Notice[] }
 
-/** Once every 30 seconds. Updates the schedules and returns what to log and announce. */
-export async function tick(list: Schedule[], io: Io, memory: Memory, now: number): Promise<TickResult> {
+/** Once every 30 seconds. Updates the schedules and returns what to log and announce. `lang` words the
+ *  result ask added to a prompt. */
+export async function tick(list: Schedule[], io: Io, memory: Memory, now: number, lang: Lang = 'en'): Promise<TickResult> {
   const log: string[] = []
   const notices: Notice[] = []
 
@@ -254,6 +284,12 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       s.waitNote = { code: 'sameTerminal' }
       continue
     }
+    // Another schedule's run is still going here. Its end would be read off this run's reply, and this
+    // run's off its — so wait; a run that went silent is closed by `watch` within finishedQuietMs.
+    if (list.some((o) => o !== s && o.sentAt !== null && locate(o.terminal, live) === t)) {
+      waitOrGiveUp('otherRun')
+      continue
+    }
     const lines = await screen(t.handle)
     if (lines === undefined) {
       waitOrGiveUp('unreadable')
@@ -304,7 +340,7 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
 
     const late = now - s.pendingSince
-    const r = await io.send(t.handle, s.prompt)
+    const r = await io.send(t.handle, asksReport(s) ? `${s.prompt.trimEnd()} ${words(lang).reportAsk(reportToken(now))}` : s.prompt)
     s.pendingSince = null
     s.waitNote = null
     if ('error' in r) {
@@ -369,7 +405,9 @@ async function watch(
   const prompt = promptState(lines, agentKind(t?.agent ?? s.terminal.agent) ?? 'claude')
   if (prompt === 'empty') {
     // The end event was missed — a quiet screen with an empty input box after sending means done.
-    finish(s, now, 'done', { code: 'byScreen' })
+    const report = reportOn(s, lines)
+    finish(s, now, 'done', { code: 'byScreen' }, report)
+    if (report?.status === 'failed') notices.push({ name: s.name, status: 'failed', summary: report.summary })
     log.push(`${s.name}: done (by screen)`)
   } else if (!s.blocked) {
     s.blocked = { code: prompt === 'typing' ? 'stuckTyping' : permissionPrompt(lines) ? 'person' : 'stuckNoPrompt' }
@@ -401,8 +439,8 @@ export async function inspectOnEvent(
   e: StatusEvent,
   io: Io,
   settleMs = 0
-): Promise<{ changed: boolean; notices: Notice[]; hold: boolean }> {
-  const out = { changed: false, notices: [] as Notice[], hold: false }
+): Promise<{ changed: boolean; notices: Notice[]; hold: boolean; reports: Map<string, Report> }> {
+  const out = { changed: false, notices: [] as Notice[], hold: false, reports: new Map<string, Report>() }
   if (e.state !== 'done' && e.state !== 'waiting') return out
   const mine = list.filter((s) => e.terminalId && s.terminal.handle === e.terminalId && s.sentAt !== null)
   if (mine.length === 0) return out
@@ -414,7 +452,10 @@ export async function inspectOnEvent(
     } catch {
       continue // read it on the next check
     }
-    if (!lines || !permissionPrompt(lines)) continue
+    if (!lines) continue
+    const report = reportOn(s, lines)
+    if (report) out.reports.set(s.id, report)
+    if (!permissionPrompt(lines)) continue
     out.hold = true
     if (!s.blocked) {
       s.blocked = { code: 'person' }
@@ -425,8 +466,13 @@ export async function inspectOnEvent(
   return out
 }
 
-/** Agent status events — a sent run that started working and then stopped is recorded as ended. */
-export function onAgentStatus(list: Schedule[], e: StatusEvent): { changed: boolean; notices: Notice[] } {
+/** Agent status events — a sent run that started working and then stopped is recorded as ended.
+ *  `reports` = the result lines inspectOnEvent found on those runs' screens, by schedule id. */
+export function onAgentStatus(
+  list: Schedule[],
+  e: StatusEvent,
+  reports: ReadonlyMap<string, Report> = new Map()
+): { changed: boolean; notices: Notice[] } {
   const notices: Notice[] = []
   if (!e.terminalId) return { changed: false, notices }
   let changed = false
@@ -444,10 +490,12 @@ export function onAgentStatus(list: Schedule[], e: StatusEvent): { changed: bool
       }
     } else if (s.sawWorking) {
       const outcome = e.mainAgent?.outcome
-      const status: Status = (outcome && outcomeStatus[outcome]) || (e.state === 'waiting' ? 'doneWaiting' : 'done')
-      finish(s, e.receivedAt, status)
+      const report = reports.get(s.id)
+      const status = finish(s, e.receivedAt, (outcome && outcomeStatus[outcome]) || (e.state === 'waiting' ? 'doneWaiting' : 'done'), undefined, report)
       // Waiting for input — it stopped at a question, not because the work is finished.
-      if (status === 'doneWaiting' || status === 'failed' || status === 'aborted') notices.push({ name: s.name, status })
+      if (status === 'doneWaiting' || status === 'failed' || status === 'aborted') {
+        notices.push({ name: s.name, status, ...(report?.summary ? { summary: report.summary } : {}) })
+      }
       changed = true
     }
   }

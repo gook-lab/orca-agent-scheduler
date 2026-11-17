@@ -1,6 +1,7 @@
-// cron 식 — OrcaCron 앱(Sources/SchedulerCore/Cron.swift)과 같은 규칙.
-// 5칸(분 시 일 월 요일), 여섯째 칸이 있으면 연도(2000~2099). 식 여러 개를 `;` 로 이으면 가장 먼저 오는 시각에 돈다.
-// 일·요일 칸이 둘 다 `*` 로 시작하지 않으면 둘 중 하나만 맞아도 된다(Vixie cron). 요일 7 은 일요일(0).
+// Cron expressions — the same rules as the OrcaCron app (Sources/SchedulerCore/Cron.swift).
+// Five fields (minute hour day month weekday); a sixth, when there, is the year (2000–2099). Several
+// expressions joined by `;` run at whichever time comes first. When neither the day nor the weekday
+// field starts with `*`, matching either one is enough (Vixie cron). Weekday 7 is Sunday (0).
 
 export type CronRule = {
   expression: string
@@ -9,7 +10,7 @@ export type CronRule = {
   days: Set<number>
   months: Set<number>
   weekdays: Set<number>
-  /** null = 모든 해 */
+  /** null = every year */
   years: Set<number> | null
   dayRestricted: boolean
   weekdayRestricted: boolean
@@ -80,7 +81,7 @@ function field(text: string, lo: number, hi: number): Set<number> | null {
     let a = lo
     let b = hi
     if (range === '*') {
-      // 전체 범위
+      // the whole range
     } else if (range.includes('-')) {
       const [x, y] = range.split('-').map(int)
       if (x === null || y === null || x === undefined || y === undefined) return null
@@ -90,7 +91,7 @@ function field(text: string, lo: number, hi: number): Set<number> | null {
       const x = int(range)
       if (x === null) return null
       a = x
-      b = step > 1 ? hi : x // "5/15" = 5 부터 15 씩
+      b = step > 1 ? hi : x // "5/15" = from 5, every 15
     }
     if (a < lo || b > hi || a > b) return null
     for (let v = a; v <= b; v += step) out.add(v)
@@ -98,7 +99,7 @@ function field(text: string, lo: number, hi: number): Set<number> | null {
   return out.size === 0 ? null : out
 }
 
-/** `after` 보다 뒤(같은 분 제외)의 첫 실행 시각. 이 기계의 현지 시각 기준. */
+/** The first run after `after` (not within the same minute), in this computer's local time. */
 export function nextRun(rules: CronRule[], after: Date): Date | null {
   let best: Date | null = null
   for (const rule of rules) {
@@ -108,24 +109,30 @@ export function nextRun(rules: CronRule[], after: Date): Date | null {
   return best
 }
 
+/** How far ahead a rule without years is searched — the gap between two leap days around 2100. A rule
+ *  with years is searched to its last one. Months that cannot match are stepped over whole. */
+const SEARCH_YEARS = 8
+
 function nextOf(rule: CronRule, after: Date): Date | null {
   const start = new Date(after.getFullYear(), after.getMonth(), after.getDate(), after.getHours(), after.getMinutes() + 1)
-  const first = new Date(start.getFullYear(), start.getMonth(), start.getDate())
-  if (rule.years && first.getFullYear() > Math.max(...rule.years)) return null
-  for (let offset = 0; offset < 400; offset++) {
-    const day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + offset)
-    if (!rule.months.has(day.getMonth() + 1)) continue
-    if (rule.years && !rule.years.has(day.getFullYear())) continue
+  const lastYear = rule.years ? Math.max(...rule.years) : start.getFullYear() + SEARCH_YEARS
+  let day = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  while (day.getFullYear() <= lastYear) {
+    if (!rule.months.has(day.getMonth() + 1) || (rule.years && !rule.years.has(day.getFullYear()))) {
+      day = new Date(day.getFullYear(), day.getMonth() + 1, 1)
+      continue
+    }
     const dom = rule.days.has(day.getDate())
     const dow = rule.weekdays.has(day.getDay())
-    const ok = rule.dayRestricted && rule.weekdayRestricted ? dom || dow : dom && dow
-    if (!ok) continue
-    for (const h of rule.hours) {
-      for (const m of rule.minutes) {
-        const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m)
-        if (t >= start) return t
+    if (rule.dayRestricted && rule.weekdayRestricted ? dom || dow : dom && dow) {
+      for (const h of rule.hours) {
+        for (const m of rule.minutes) {
+          const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m)
+          if (t >= start) return t
+        }
       }
     }
+    day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1)
   }
   return null
 }

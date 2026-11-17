@@ -1,6 +1,6 @@
 // Same cases as the OrcaCron app's checks (Sources/SchedulerCheck) so the two read each other's cron.
 import { assert, test } from 'orca/testing'
-import { cronOfSpec, daysOf, describe, minuteFromText, specOfCron, type TimeSpec } from './timespec'
+import { cronOfSpec, daysOf, describe, minuteFromText, specOfCron, type TimeSpec, zoneText } from './timespec'
 
 const times = (list: number[]) => ({ kind: 'times' as const, list })
 const every = (n: number, from: number, to: number) => ({ kind: 'every' as const, n, from, to })
@@ -55,7 +55,7 @@ test('summary in English and Korean', () => {
   const both = (cron: string) => [describe(cron, 'en'), describe(cron, 'ko')]
   assert.deepEqual(both('0 9,18 * * 1-5'), ['Weekdays 09:00 · 18:00', '평일 09:00 · 18:00'])
   assert.deepEqual(both('0 9 * * 1,3'), ['Every Mon·Wed 09:00', '매주 월·수 09:00'])
-  assert.deepEqual(both('0 9 * * 0,6'), ['Weekends 09:00', '휴일 09:00'])
+  assert.deepEqual(both('0 9 * * 0,6'), ['Weekends 09:00', '주말 09:00'])
   assert.deepEqual(both('3 0,6,12,18 * * *'), ['Every day at :03 past 00·06·12·18', '매일 00·06·12·18시 03분'])
   assert.deepEqual(both('*/5 * * * *'), ['Every 5 min', '5분마다'])
   assert.deepEqual(both('3 * * * *'), ['Hourly at :03', '매시 03분'])
@@ -79,7 +79,25 @@ test('typed times', () => {
     ['9:60', null],
     ['12345', null],
     ['', null],
-    ['a', null]
+    ['a', null],
+    // A 12-hour time said with its half.
+    ['9pm', 1260],
+    ['9:30 PM', 1290],
+    ['9.30 p.m.', 1290],
+    ['12am', 0],
+    ['12:15 am', 15],
+    ['12pm', 720],
+    ['오후 9시 30분', 1290],
+    ['오전 12시', 0],
+    ['13pm', null],
+    ['0am', null],
+    ['9 am pm', null]
   ]
   for (const [text, minute] of cases) assert.equal(minuteFromText(text), minute, text)
+})
+
+test("the clock the times are read on — this computer's zone and its offset from UTC", () => {
+  assert.match(zoneText(), /^(?:[A-Za-z_+\-/0-9]+, )?UTC[+−]\d{1,2}(?::\d{2})?$/)
+  const offset = -new Date().getTimezoneOffset()
+  assert.ok(zoneText().endsWith(`UTC${offset < 0 ? '−' : '+'}${Math.floor(Math.abs(offset) / 60)}${offset % 60 ? `:${String(Math.abs(offset) % 60).padStart(2, '0')}` : ''}`))
 })

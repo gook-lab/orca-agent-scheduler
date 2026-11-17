@@ -14,6 +14,7 @@ import {
   env,
   IconButton,
   Input,
+  Link,
   List,
   ListItem,
   plugin,
@@ -41,7 +42,7 @@ import {
 import { nextRun, parseCron } from './cron'
 import type { RunRecord, Schedule, TerminalRef } from './engine'
 import { attentionCodes, type Lang, langNames, langOfLocale, noteText, recordText, statusText, whenText, words } from './i18n'
-import { LANG_KEY, type TerminalOption } from './protocol'
+import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import {
   clock,
@@ -54,7 +55,8 @@ import {
   maxTimes,
   minuteFromText,
   type Pattern,
-  specOfCron
+  specOfCron,
+  zoneText
 } from './timespec'
 
 /** The worker's schedules — asked once, then pushed on every change. */
@@ -80,6 +82,12 @@ const tab = atom<View>('schedules')
 /** The search box — filters both tabs. */
 const query = atom('')
 const settingsOpen = atom(false)
+/** What the menubar app OrcaCron has to bring over — read each time Settings opens; null until it answers. */
+const importList = atom<ImportList | null>(null)
+const importing = atom(false)
+/** How many schedules the last import added; null before one. */
+const importAdded = atom<number | null>(null)
+const importError = atom<string | null>(null)
 /** Favorite terminals by pane id, first in both tabs. Written to storage by hand — a persisted atom
  *  changed by a press fired its handler three times and ended on the old value. */
 const favorites = atom<string[]>([])
@@ -98,6 +106,8 @@ const onboarded = atom('onboarded', false, { persist: 'storage' })
 const introStep = atom<number | null>(null)
 /** How sending works, opened under the list. */
 const helpOpen = atom(false)
+/** What each version changed — the releases of the public repository, newest first. */
+const RELEASE_NOTES = 'https://github.com/gook-lab/orca-agent-scheduler/releases'
 
 /** The plugin's name — the same in every language. */
 const TITLE = 'Agent Scheduler'
@@ -113,6 +123,8 @@ type Draft = {
   name: string
   handle: string
   clearFirst: boolean
+  /** Ask the agent to end with a result line. */
+  report: boolean
   day: DayMode
   /** Pick days: 0 = Sunday … 6 = Saturday. */
   picked: number[]
@@ -134,6 +146,7 @@ const emptyDraft = (): Draft => ({
   name: '',
   handle: '',
   clearFirst: false,
+  report: true,
   day: 'weekdays',
   picked: [1, 2, 3, 4, 5],
   dates: [],
@@ -164,6 +177,8 @@ const thisMonth = (): { y: number; m: number } => {
 /** The month the date calendar shows. */
 const month = atom(thisMonth())
 
+/** The Terminals tab, read afresh — the worker's push can be up to a check (30 s) behind, so a terminal
+ *  just started shows at once. What is there stays in sight meanwhile; the reload button spins. */
 async function refreshTerminals(): Promise<void> {
   set(refreshing, true)
   try {
@@ -175,8 +190,32 @@ async function refreshTerminals(): Promise<void> {
   }
 }
 
-/** The Terminals tab, read afresh — the worker's push can be up to a check (30 s) behind, so a terminal
- *  just started shows at once. What is there stays in sight meanwhile; the reload button spins. */
+async function loadImport(): Promise<void> {
+  set(importList, await plugin.request('orcacron.list').catch(() => null))
+}
+
+function openSettings(): void {
+  set(importAdded, null)
+  set(importError, null)
+  set(settingsOpen, true)
+  void loadImport()
+}
+
+async function runImport(ids: string[]): Promise<void> {
+  set(importing, true)
+  set(importAdded, null)
+  set(importError, null)
+  try {
+    const r = await plugin.request('orcacron.import', { ids })
+    set(importAdded, r.added)
+    await loadImport()
+  } catch (error) {
+    set(importError, (error as Error).message)
+  } finally {
+    set(importing, false)
+  }
+}
+
 function showTerminals(): void {
   set(tab, 'terminals')
   void refreshTerminals()
@@ -241,7 +280,8 @@ function openForm(d: Draft): void {
 }
 
 const openNew = (handle = ''): void => openForm({ ...emptyDraft(), handle })
-const openSend = (handle = ''): void => openForm({ ...emptyDraft(), once: true, handle })
+// A one-off usually carries on a conversation the person is in — it asks for a result only when told to.
+const openSend = (handle = ''): void => openForm({ ...emptyDraft(), once: true, report: false, handle })
 
 function closeForm(): void {
   set(draft, emptyDraft())
@@ -357,6 +397,7 @@ const draftOf = (s: Schedule): Draft => ({
   name: s.name,
   handle: s.terminal.handle,
   clearFirst: s.clearFirst,
+  report: s.report,
   prompt: s.prompt
 })
 
@@ -412,7 +453,8 @@ async function save(): Promise<void> {
       cron: c.cron,
       prompt: d.prompt,
       enabled: old?.enabled ?? true,
-      clearFirst: d.clearFirst
+      clearFirst: d.clearFirst,
+      report: d.report
     })
     closeForm()
     showSaved(saved)
@@ -444,11 +486,11 @@ function showSaved(s: Schedule): void {
 }
 
 const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'warning' | 'neutral' | 'accent' =>
-  status === 'success' || status === 'done' || status === 'doneWaiting'
+  status === 'success' || status === 'done'
     ? 'success'
     : status === 'failed' || status === 'noResult'
       ? 'danger'
-      : status === 'skipped' || status === 'aborted'
+      : status === 'skipped' || status === 'aborted' || status === 'doneWaiting'
         ? 'warning'
         : status === 'sent'
           ? 'accent'
@@ -478,7 +520,7 @@ function Header() {
         <IconButton icon="add" size="sm" variant="ghost" label={u.newSchedule} onPress={() => openNew()} />
         <IconButton icon="next" size="sm" variant="ghost" label={u.sendOnce} onPress={() => openSend()} />
         <ReloadButton />
-        <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={() => set(settingsOpen, true)} />
+        <IconButton icon="settings" size="sm" variant="ghost" label={u.settings} onPress={openSettings} />
       </Toolbar>
     </Box>
   )
@@ -643,16 +685,40 @@ function TerminalLine({
 
 // ───────────────────────── Schedule — switch, actions, next run, last result ─────────────────────────
 
-/** One result. The text wraps: cut to one line, a late run's record lost how long it took. */
-function RecordLine({ r }: { r: RunRecord }) {
+/** A link as text: the site in full — it is what a person reads to know where the link leads — then
+ *  as much of the path as fits. */
+const linkText = (url: string): string => {
+  const bare = url.replace(/^https?:\/\//i, '')
+  const site = bare.split(/[/?#]/, 1)[0]
+  const rest = bare.slice(site.length)
+  return site + (rest.length > 40 ? `${rest.slice(0, 39)}…` : rest)
+}
+
+/** What a result says beside its badge. The text wraps: cut to one line, a late run's record lost how
+ *  long it took. Under it, what the agent wrote in its result line. */
+function RecordDetail({ r }: { r: RunRecord }) {
   const l = read(lang)
   return (
-    <Box direction="row" align="start" gap="xs">
-      <Badge tone={statusTone(r.status)}>{statusText(l, r.status)}</Badge>
-      <Box grow shrink minWidth={0}>
-        <Text muted size="xs">
-          {[whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')}
+    <Stack gap="none">
+      <Text muted size="xs">
+        {[whenText(l, r.at), recordText(l, r)].filter(Boolean).join(' · ')}
+      </Text>
+      {r.summary ? <Text size="xs">{r.summary}</Text> : null}
+      {r.link ? (
+        <Text size="xs">
+          <Link href={r.link}>{linkText(r.link)}</Link>
         </Text>
+      ) : null}
+    </Stack>
+  )
+}
+
+function RecordLine({ r }: { r: RunRecord }) {
+  return (
+    <Box direction="row" align="start" gap="xs">
+      <Badge tone={statusTone(r.status)}>{statusText(read(lang), r.status)}</Badge>
+      <Box grow shrink minWidth={0}>
+        <RecordDetail r={r} />
       </Box>
     </Box>
   )
@@ -716,7 +782,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: boolean }) {
       {s.history.length > 1 ? (
         <Collapsible title={u.history(s.history.length)}>
           <Stack gap="xs">
-            {s.history.slice(0, 10).map((r) => (
+            {s.history.map((r) => (
               <RecordLine r={r} />
             ))}
           </Stack>
@@ -734,18 +800,21 @@ function SentList({ list }: { list: Schedule[] }) {
   const sorted = [...list].sort((a, b) => at(b) - at(a))
   const waiting = sorted.filter((s) => s.pendingSince !== null).length
   const busy = waiting > 0 || sorted.some((s) => s.sentAt !== null)
+  // A search draws it open, like its block — what was found is in here.
+  const searching = read(query).trim() !== ''
   // Open is read only when drawn first, so a new send keyed by the newest record draws it afresh — open
   // while it waits or runs. It stays as it is when that send ends; a fold by hand holds until the next one.
   return (
     <Collapsible
-      key={`sent-${sorted[0]?.id ?? ''}`}
+      key={`sent-${sorted[0]?.id ?? ''}-${searching}`}
       title={u.sentGroup(sorted.length - waiting, waiting, sorted[0] ? whenText(l, at(sorted[0])) : null)}
-      defaultOpen={busy}
+      defaultOpen={busy || searching}
     >
       <Stack gap="xs">
         {sorted.map((s) => {
           const note = s.blocked ?? (s.pendingSince !== null ? s.waitNote : null)
           const status = s.pendingSince !== null ? null : s.sentAt !== null ? 'sent' : s.lastStatus
+          const ended = s.pendingSince === null && s.sentAt === null ? s.history[0] : undefined
           return (
             <Stack gap="none">
               <Box direction="row" align="center" gap="xs">
@@ -758,9 +827,13 @@ function SentList({ list }: { list: Schedule[] }) {
                 <IconButton icon="delete" size="xs" variant="ghost" label={u.remove} onPress={() => remove(s)} />
               </Box>
               {/* Its own line — beside the name it was squeezed into a column and broke mid-time. */}
-              <Text size="xs" muted>
-                {whenText(l, at(s))}
-              </Text>
+              {ended ? (
+                <RecordDetail r={ended} />
+              ) : (
+                <Text size="xs" muted>
+                  {whenText(l, at(s))}
+                </Text>
+              )}
               {note && needsAttention(s) ? (
                 <Text size="xs" tone="warning">
                   {noteText(l, note)}
@@ -817,8 +890,10 @@ const holds = (g: Group, s: Schedule): boolean => sameTerminal(g.ref, s.terminal
 function TerminalBlock({ g }: { g: Group }) {
   const l = read(lang)
   const u = words(l).ui
-  const open = !read(collapsed).includes(g.key)
-  const toggle = () => update(collapsed, (keys) => (open ? [...keys, g.key] : keys.filter((k) => k !== g.key)))
+  const folded = read(collapsed).includes(g.key)
+  // While searching, a folded block shows what was found in it; the fold comes back with the search cleared.
+  const open = !folded || read(query).trim() !== ''
+  const toggle = () => update(collapsed, (keys) => (folded ? keys.filter((k) => k !== g.key) : [...keys, g.key]))
   const next = g.recurring.filter((s) => s.enabled && s.nextRunAt !== null).sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
   const gone = read(undone)
   return (
@@ -1210,6 +1285,9 @@ function Form() {
   const clearField = (
     <Checkbox label={u.clearFirst} description={u.clearFirstHint} checked={d.clearFirst} onChange={(clearFirst) => patch({ clearFirst })} />
   )
+  const reportField = (
+    <Checkbox label={u.report} description={d.prompt.trimStart().startsWith('/') ? u.reportNotOnCommand : u.reportHint} checked={d.report} onChange={(report) => patch({ report })} />
+  )
   const confirm = (
     <Callout tone="warning" title={u.discardTitle}>
       <Row gap="xs">
@@ -1261,6 +1339,9 @@ function Form() {
           <Text muted size="xs">
             {'error' in c ? c.error : describe(c.cron, l)}
           </Text>
+          <Text muted size="xs">
+            {u.clock(zoneText())}
+          </Text>
         </Stack>
       )}
       <Stack gap="xs">
@@ -1269,11 +1350,16 @@ function Form() {
           <Text muted size="xs">
             {u.sendHint}
           </Text>
-        ) : null}
+        ) : (
+          reportField
+        )}
       </Stack>
       {d.once ? (
-        <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim()}>
-          {nameField}
+        <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim() || d.report}>
+          <Stack gap="sm">
+            {nameField}
+            {reportField}
+          </Stack>
         </Collapsible>
       ) : null}
       <Stack gap="xs">
@@ -1302,6 +1388,66 @@ function Form() {
 }
 
 // ───────────────────────── Settings ─────────────────────────
+
+/** Schedules of the menubar app OrcaCron, to copy over. Nothing shows on a computer without the app's data. */
+function Importer() {
+  const l = read(lang)
+  const u = words(l).ui
+  const w = u.importer
+  const data = read(importList)
+  if (!data?.found || data.items.length === 0) return null
+  const ready = data.items.filter((i) => !i.imported && !i.badCron)
+  const added = read(importAdded)
+  return (
+    <Stack gap="sm">
+      <Separator />
+      <Stack gap="xs">
+        <Text size="sm" weight="medium">
+          {w.title}
+        </Text>
+        <Text size="xs" muted>
+          {w.hint(data.dir)}
+        </Text>
+      </Stack>
+      <Stack gap="xs">
+        {data.items.map((i) => (
+          <Box direction="row" align="start" gap="xs">
+            <Box grow shrink minWidth={0}>
+              <Text size="xs" weight="medium">
+                {i.name}
+              </Text>
+              <Text size="xs" muted>
+                {[i.badCron ? i.cron : describe(i.cron, l), i.terminal.title, i.open ? '' : u.notOpen].filter(Boolean).join(' · ')}
+              </Text>
+            </Box>
+            {i.imported ? <Badge tone="success">{w.imported}</Badge> : i.badCron ? <Badge tone="warning">{w.badCron}</Badge> : null}
+          </Box>
+        ))}
+      </Stack>
+      {added !== null ? (
+        <Callout tone="success" icon="check" title={w.done(added)}>
+          {w.doneHint}
+        </Callout>
+      ) : null}
+      {read(importError) ? (
+        <Callout tone="danger" title={w.failed}>
+          {read(importError)}
+        </Callout>
+      ) : null}
+      {ready.length > 0 ? (
+        <Row>
+          <Button size="sm" variant="outline" icon="download" disabled={read(importing)} onPress={() => void runImport(ready.map((i) => i.id))}>
+            {w.button(ready.length)}
+          </Button>
+        </Row>
+      ) : added === null && data.items.every((i) => i.imported) ? (
+        <Text size="xs" muted>
+          {w.nothing}
+        </Text>
+      ) : null}
+    </Stack>
+  )
+}
 
 function Settings() {
   const u = words(read(lang)).ui
@@ -1336,6 +1482,7 @@ function Settings() {
           {u.showIntro}
         </Button>
       </Row>
+      <Importer />
     </Stack>
   )
 }
@@ -1406,10 +1553,11 @@ function Help() {
         <Callout tone="neutral" icon="info" title={u.help}>
           <Stack gap="xs">
             <Text size="xs">{u.footer}</Text>
-            <Row>
+            <Row gap="xs" wrap>
               <Button size="xs" variant="ghost" onPress={() => set(introStep, 0)}>
                 {u.showIntro}
               </Button>
+              <Link href={RELEASE_NOTES}>{u.whatsNew}</Link>
             </Row>
           </Stack>
         </Callout>

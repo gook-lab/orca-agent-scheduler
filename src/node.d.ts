@@ -1,4 +1,4 @@
-// worker 가 쓰는 Node 내장 모듈의 형 — Orca 형 묶음에 Node 형이 없어 쓰는 것만 적는다.
+// Types for the Node built-ins the worker uses — Orca's type bundle has none for Node, so only what is used is declared.
 declare module 'node:child_process' {
   export function execFile(
     file: string,
@@ -10,6 +10,12 @@ declare module 'node:child_process' {
 
 declare module 'node:fs' {
   export function existsSync(path: string): boolean
+  export function statSync(path: string, options: { throwIfNoEntry: false }): { isFile(): boolean; size: number } | undefined
+  export function readFileSync(path: string, encoding: 'utf8'): string
 }
 
-declare const process: { execPath: string }
+declare module 'node:os' {
+  export function homedir(): string
+}
+
+declare const process: { execPath: string; env: Record<string, string | undefined> }

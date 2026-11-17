@@ -2,7 +2,9 @@
 import { afterEach, assert, mockHost, mountWorker, test } from 'orca/testing'
 import type { CliResult } from './cli'
 import { blankSchedule, type Schedule } from './engine'
-import type { RunnerStatus, TerminalOption } from './protocol'
+import { importedId } from './orcacron'
+import type { ImportList, RunnerStatus, TerminalOption } from './protocol'
+import { reportToken } from './report'
 import * as main from './worker'
 
 const rule = '──────────────────────────────'
@@ -31,7 +33,7 @@ function fakeCli(over: { send?: CliResult; list?: CliResult } = {}) {
   return calls
 }
 
-function host(storage: Record<string, unknown> = {}) {
+function host(storage: Record<string, unknown> = {}, lines: string[] = idle) {
   return mockHost({
     storage: storage as never,
     results: {
@@ -39,7 +41,7 @@ function host(storage: Record<string, unknown> = {}) {
         workspaces: [{ id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/repo/docs', branch: 'main', hostId: null }],
         truncated: false
       },
-      'terminal.read': { lines: idle, truncated: false },
+      'terminal.read': { lines, truncated: false },
       'statusBar.update': { ok: true },
       'notifications.show': { delivered: true }
     }
@@ -49,11 +51,15 @@ function host(storage: Record<string, unknown> = {}) {
 const terminal = { handle: 'h1', title: 'Morning', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: 't1', leafId: 'l1' }
 const draft = { name: 'Morning report', terminal, cron: '0 9 * * 1-5', prompt: 'Plan the day', enabled: true, clearFirst: false }
 const settle = () => new Promise((r) => setTimeout(r, 50))
+/** What each send typed — the value of its `--text=`. */
+const sentText = (calls: string[][]): string[] => calls.filter((c) => c[1] === 'send').map((c) => c[3].slice('--text='.length))
 
 // A failed assertion skips the test's own deactivate — stop the 30-second timer anyway, or Node never exits.
+const realOrcaCron = { ...main.orcaCron }
 afterEach(() => {
   main.deactivate()
   main.cli.run = null
+  Object.assign(main.orcaCron, realOrcaCron)
 })
 
 test('saving fills the next run, stores it and tells the panel', async () => {
@@ -131,7 +137,7 @@ test('send now — goes into the chosen terminal through the Orca CLI once it is
   await settle()
   assert.deepEqual(
     calls.filter((c) => c[1] === 'send'),
-    [['terminal', 'send', '--terminal', 'h1', '--text', 'Plan the day', '--enter', '--wait-submit', '8']]
+    [['terminal', 'send', '--terminal=h1', '--text=Plan the day', '--enter', '--wait-submit', '8']]
   )
   const stored = (h.data().storage.schedules as Schedule[])[0]
   assert.ok(stored.sentAt)
@@ -265,8 +271,8 @@ test('send once — saved without a name, sent right away into that terminal', a
   assert.equal(s.nextRunAt, null)
   await settle()
   assert.deepEqual(
-    calls.filter((c) => c[1] === 'send').map((c) => c[3]),
-    ['h1']
+    calls.filter((c) => c[1] === 'send').map((c) => c[2]),
+    ['--terminal=h1']
   )
   // A schedule (not a one-off send) still needs a name.
   await assert.rejects(worker.request('schedules.save', { ...draft, name: '' }), /name/)
@@ -316,7 +322,7 @@ test('focus — brings Orca to the terminal with the CLI', async () => {
   const worker = await mountWorker(main, { host: host() })
   const r = (await worker.request('terminals.focus', { handle: 'h2' })) as { ok: boolean }
   assert.equal(r.ok, true)
-  assert.deepEqual(calls.find((c) => c[1] === 'switch'), ['terminal', 'switch', '--terminal', 'h2'])
+  assert.deepEqual(calls.find((c) => c[1] === 'switch'), ['terminal', 'switch', '--terminal=h2'])
   await worker.deactivate()
   main.cli.run = null
 })
@@ -368,4 +374,201 @@ test('a terminal whose agent blinks out for a moment stays in the panel list', a
   blink = true
   assert.deepEqual(await handles(), [['h1', 'claude']], 'Orca lost the agent for a second — the form still finds the terminal')
   await worker.deactivate()
+})
+
+test('a schedule saved with the result option sends the ask, and the line on screen ends up in its record and its failure notice', async () => {
+  const calls = fakeCli()
+  const h0 = host()
+  const w0 = await mountWorker(main, { host: h0 })
+  const saved = (await w0.request('schedules.save', { ...draft, report: true })) as Schedule
+  assert.equal(saved.report, true)
+  await w0.request('schedules.runNow', { id: saved.id })
+  await settle()
+  const text = sentText(calls)[0] ?? ''
+  assert.match(text, /^Plan the day When you finish, end your reply with one line in this form: \[result \w{4} STATUS\]/)
+  const sentAt = (h0.data().storage.schedules as Schedule[])[0].sentAt as number
+  assert.ok(text.includes(`[result ${reportToken(sentAt)} STATUS]`), 'the tag sent is the tag read for')
+  await w0.deactivate()
+
+  const running = h0.data().storage.schedules as Schedule[]
+  const h = host({ schedules: running }, ['❯ Plan the day', `⏺ [result ${reportToken(sentAt)} failed] The build broke [link] https://example.com/run/7 [end]`, rule, '❯ ', rule])
+  const worker = await mountWorker(main, { host: h })
+  await worker.emit('agent.status.changed', { workspaceId: null, paneKey: 'p', terminalId: 'h1', state: 'done', receivedAt: Date.now() })
+  const done = (h.data().storage.schedules as Schedule[])[0]
+  assert.equal(done.sentAt, null)
+  assert.equal(done.history[0].status, 'failed')
+  assert.equal(done.history[0].summary, 'The build broke')
+  assert.equal(done.history[0].link, 'https://example.com/run/7')
+  assert.deepEqual(
+    (h.callsOf('notifications.show') as { body: string }[]).map((n) => n.body),
+    ['Morning report: Failed — The build broke']
+  )
+  await worker.deactivate()
+})
+
+test('schedules stored before the result option load with it off', async () => {
+  const [old] = main.normalize([{ id: 's1', name: 'Old', prompt: 'x' }])
+  assert.equal(old.report, false)
+  assert.equal(main.normalize([{ id: 's1', report: 'yes' }])[0].report, false)
+  assert.equal(main.normalize([{ id: 's1', report: true }])[0].report, true)
+})
+
+const appFile = JSON.stringify({
+  schedules: [
+    { id: 'ledger', name: 'Ledger update', cron: '3 0,6,12,18 * * *', enabled: true, task: 'ledger', terminal: { handle: 'gone', label: 'Morning (then)', agent: 'claude', tabId: 't1', leafId: 'l1' } },
+    { id: 'night', name: 'Night tidy', cron: '0 3 * * *', enabled: true, prompt: 'Tidy up', terminal: { handle: 'closed', label: 'Closed one', agent: 'codex' } },
+    { id: 'odd', name: 'Odd times', cron: 'whenever', enabled: true, prompt: 'Hi', terminal: { handle: 'h1', label: 'Morning' } }
+  ]
+})
+
+function fakeApp(text: string | null) {
+  const asked: string[] = []
+  main.orcaCron.dir = () => '/home/me/.orca-cron'
+  main.orcaCron.read = (path) => {
+    asked.push(path)
+    return text
+  }
+  return asked
+}
+
+test("OrcaCron — its schedules are listed with their terminals matched to the open ones", async () => {
+  fakeCli()
+  const asked = fakeApp(appFile)
+  const worker = await mountWorker(main, { host: host() })
+  const list = (await worker.request('orcacron.list')) as ImportList
+  assert.deepEqual(asked, ['/home/me/.orca-cron/schedules.json'])
+  assert.equal(list.found, true)
+  assert.equal(list.dir, '/home/me/.orca-cron')
+  assert.deepEqual(
+    list.items.map((i) => [i.id, i.open, i.imported, i.badCron]),
+    [
+      ['ledger', false, false, false],
+      ['night', false, false, false],
+      ['odd', true, false, true]
+    ]
+  )
+  assert.equal(list.items[2].terminal.workspace, 'acme_notes', 'an open terminal comes with its workspace')
+  assert.equal(list.items[0].terminal.title, 'Morning (then)', 'a terminal not found keeps the name the app knew it by')
+  await worker.deactivate()
+})
+
+test('OrcaCron — importing adds them switched off, once; a schedule whose times cannot be read stays behind', async () => {
+  fakeCli()
+  fakeApp(appFile)
+  const h = host()
+  const worker = await mountWorker(main, { host: h })
+  const first = (await worker.request('orcacron.import', { ids: ['ledger', 'night', 'odd', 'nope'] })) as { added: number }
+  assert.equal(first.added, 2)
+  const stored = h.data().storage.schedules as Schedule[]
+  assert.deepEqual(
+    stored.map((s) => [s.id, s.enabled, s.nextRunAt, s.report]),
+    [
+      [importedId('ledger'), false, null, true],
+      [importedId('night'), false, null, true]
+    ]
+  )
+  assert.match(stored[0].prompt, /^\[예약 실행 · Ledger update\] 작업 파일 \/home\/me\/\.orca-cron\/tasks\/ledger\.md 을 읽고/)
+  await settle()
+  assert.equal((h.data().storage.schedules as Schedule[])[0].sentAt, null, 'switched off — nothing goes out')
+
+  const again = (await worker.request('orcacron.import', { ids: ['ledger', 'night'] })) as { added: number }
+  assert.equal(again.added, 0, 'already here')
+  assert.equal((h.data().storage.schedules as Schedule[]).length, 2)
+  const list = (await worker.request('orcacron.list')) as ImportList
+  assert.deepEqual(
+    list.items.map((i) => i.imported),
+    [true, true, false]
+  )
+  assert.deepEqual(worker.refusals, [])
+  await worker.deactivate()
+})
+
+test('OrcaCron — without the app\'s data, or with a file that is not JSON, nothing is offered', async () => {
+  fakeCli()
+  fakeApp(null)
+  const worker = await mountWorker(main, { host: host() })
+  assert.deepEqual(await worker.request('orcacron.list'), { found: false, dir: '/home/me/.orca-cron', items: [] })
+  fakeApp('{ not json')
+  assert.deepEqual(await worker.request('orcacron.list'), { found: true, dir: '/home/me/.orca-cron', items: [] })
+  assert.deepEqual(await worker.request('orcacron.import', { ids: ['ledger'] }), { added: 0 })
+  await worker.deactivate()
+})
+
+test('stored entries this version cannot read are dropped field by field, not thrown on', () => {
+  const [s] = main.normalize([
+    {
+      id: 's1',
+      name: 7,
+      cron: 5,
+      prompt: null,
+      enabled: 'yes',
+      nextRunAt: 'soon',
+      sentAt: Number.NaN,
+      terminal: { handle: 42, title: 'Morning', leafId: null },
+      history: [null, 'x', { at: 'then', status: 'done' }, { at: 1, status: 'done', tookMs: '3', note: 'old', summary: 9, link: 'https://example.com/a' }]
+    }
+  ])
+  assert.deepEqual([s.name, s.cron, s.prompt, s.enabled, s.nextRunAt, s.sentAt], ['', '', '', true, null, null])
+  assert.deepEqual([s.terminal.handle, s.terminal.title, s.terminal.leafId, s.terminal.agent], ['', 'Morning', '', 'claude'])
+  assert.deepEqual(s.history, [{ at: 1, status: 'done', link: 'https://example.com/a' }])
+})
+
+test('one stored schedule whose times are not text does not stop the others from going out', async () => {
+  const calls = fakeCli()
+  const due = Date.now() - 1000
+  const bad = { ...blankSchedule('bad'), name: 'Broken', terminal, cron: 5, prompt: 'Never' }
+  const good = { ...blankSchedule('good'), name: 'Morning', terminal, cron: '0 9 * * *', prompt: 'Plan the day', nextRunAt: due }
+  const h = host({ schedules: [bad, good] })
+  const worker = await mountWorker(main, { host: h })
+  await settle()
+  assert.deepEqual(
+    sentText(calls),
+    ['Plan the day']
+  )
+  const stored = h.data().storage.schedules as Schedule[]
+  assert.deepEqual(
+    stored.map((s) => [s.id, s.cron, s.nextRunAt === null]),
+    [
+      ['bad', '', true],
+      ['good', '0 9 * * *', false]
+    ]
+  )
+  await worker.deactivate()
+})
+
+test('an OrcaCron file that lists one id twice adds one schedule', async () => {
+  fakeCli()
+  main.orcaCron.dir = () => '/home/me/.orca-cron'
+  main.orcaCron.read = () =>
+    JSON.stringify({
+      schedules: [
+        { id: 'dup', name: 'First', cron: '0 9 * * *', prompt: 'a', terminal: { handle: 'h1', label: 'Morning' } },
+        { id: 'dup', name: 'Second', cron: '0 10 * * *', prompt: 'b', terminal: { handle: 'h1', label: 'Morning' } }
+      ]
+    })
+  const h = host()
+  const worker = await mountWorker(main, { host: h })
+  assert.deepEqual(await worker.request('orcacron.import', { ids: ['dup'] }), { added: 1 })
+  assert.deepEqual(
+    (h.data().storage.schedules as Schedule[]).map((s) => [s.id, s.name]),
+    [[importedId('dup'), 'First']]
+  )
+  await worker.deactivate()
+})
+
+test("only a plain file of a sane size is read from OrcaCron's folder", () => {
+  const read = main.orcaCron.read
+  assert.equal(read('/no/such/folder/schedules.json'), null)
+  assert.equal(read('/'), null, 'a folder is not the file')
+  // The program running this test is a plain file far past the limit. A pipe is turned away the same
+  // way, before the read that would never return.
+  assert.equal(read(process.execPath), null)
+})
+
+test('a stored link that is not a web link is dropped with the rest kept', () => {
+  const [s] = main.normalize([{ id: 's1', history: [{ at: 1, status: 'success', summary: 'Done', link: 'javascript:alert(1)' }, { at: 0, status: 'success', link: 'https://a@b.example/' }] }])
+  assert.deepEqual(s.history, [
+    { at: 1, status: 'success', summary: 'Done' },
+    { at: 0, status: 'success' }
+  ])
 })

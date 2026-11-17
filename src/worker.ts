@@ -1,6 +1,8 @@
 // Schedule worker. It owns a status bar item, so it keeps running while the plugin is on (checks every 30 s).
 // Schedules live in storage 'schedules' and only this file edits them; the panel asks by request and hears by post.
 // The terminal list and sending go through the Orca CLI (why: src/cli.ts).
+import { readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { type CliRunner, cliRunner, findCli, holdAgents, sendArgs, sentFrom, terminalsFrom } from './cli'
 import {
@@ -8,16 +10,21 @@ import {
   blankTerminal,
   inspectOnEvent,
   type Io,
+  locate,
   newMemory,
   nextAfter,
   type Notice,
   onAgentStatus,
+  type RunRecord,
   type Schedule,
   type StatusEvent,
+  type TerminalRef,
   tick
 } from './engine'
-import { attentionCodes, type Lang, langOf, lateText, type Note, noteText, statuses, statusText, words } from './i18n'
-import { LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
+import { attentionCodes, type Lang, langOf, lateText, type Note, noteText, type Status, statuses, statusText, words } from './i18n'
+import { importedId, itemsFrom, scheduleFrom } from './orcacron'
+import { type ImportList, LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
+import { isWebLink } from './report'
 import { agentKind } from './screen'
 import { clock } from './timespec'
 
@@ -42,24 +49,61 @@ function invalid(message: string): HostError {
 }
 
 const isNote = (v: unknown): v is Note => typeof v === 'object' && v !== null && typeof (v as Note).code === 'string'
-const isStatus = (v: unknown): boolean => (statuses as readonly unknown[]).includes(v)
+const isStatus = (v: unknown): v is Status => (statuses as readonly unknown[]).includes(v)
+const text = (v: unknown): string => (typeof v === 'string' ? v : '')
+const time = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
-/** Fill missing fields of older stored shapes; drop what this version cannot show. */
+function recordFrom(v: unknown): RunRecord | null {
+  const r = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>
+  const at = time(r.at)
+  if (at === null || !isStatus(r.status)) return null
+  const tookMs = time(r.tookMs)
+  const lateMs = time(r.lateMs)
+  return {
+    at,
+    status: r.status,
+    ...(tookMs !== null ? { tookMs } : {}),
+    ...(isNote(r.note) ? { note: r.note } : {}),
+    ...(lateMs !== null ? { lateMs } : {}),
+    ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
+    ...(typeof r.link === 'string' && isWebLink(r.link) ? { link: r.link } : {})
+  }
+}
+
+/**
+ * Schedules as storage holds them, read field by field. Older shapes miss fields or hold what this
+ * version cannot show, and one entry that cannot be read must not stop the rest — a number where the
+ * times go made every check throw. Times that are not text become none, so that schedule never sends.
+ */
 export function normalize(value: unknown): Schedule[] {
   if (!Array.isArray(value)) return []
   return value
     .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && typeof v.id === 'string')
     .map((v) => {
-      const { workspaceId: _w, workspace: _ws, agent: _a, terminalId: _t, delivered: _d, ...rest } = v
-      const s: Schedule = { ...blankSchedule(v.id as string), ...(rest as Partial<Schedule>) }
-      s.terminal = { ...blankTerminal(), ...(typeof v.terminal === 'object' && v.terminal !== null ? (v.terminal as object) : {}) }
-      s.history = (Array.isArray(v.history) ? v.history : []).filter((r) => isStatus((r as { status?: unknown }).status))
-      s.waitNote = isNote(v.waitNote) ? v.waitNote : null
-      s.blocked = isNote(v.blocked) ? v.blocked : null
-      s.lastStatus = isStatus(v.lastStatus) ? (v.lastStatus as Schedule['lastStatus']) : null
-      s.clearFirst = v.clearFirst === true
-      s.once = v.once === true
-      return s
+      const from = (typeof v.terminal === 'object' && v.terminal !== null ? v.terminal : {}) as Record<string, unknown>
+      const terminal = blankTerminal()
+      for (const k of Object.keys(terminal) as (keyof TerminalRef)[]) if (typeof from[k] === 'string') terminal[k] = from[k]
+      return {
+        id: v.id as string,
+        name: text(v.name),
+        terminal,
+        cron: text(v.cron),
+        prompt: text(v.prompt),
+        enabled: v.enabled !== false,
+        clearFirst: v.clearFirst === true,
+        report: v.report === true,
+        once: v.once === true,
+        nextRunAt: time(v.nextRunAt),
+        pendingSince: time(v.pendingSince),
+        waitNote: isNote(v.waitNote) ? v.waitNote : null,
+        clearedFor: time(v.clearedFor),
+        sentAt: time(v.sentAt),
+        lateMs: time(v.lateMs),
+        sawWorking: v.sawWorking === true,
+        blocked: isNote(v.blocked) ? v.blocked : null,
+        lastStatus: isStatus(v.lastStatus) ? v.lastStatus : null,
+        history: (Array.isArray(v.history) ? v.history : []).map(recordFrom).filter((r): r is RunRecord => r !== null)
+      }
     })
 }
 
@@ -70,6 +114,20 @@ let timer: ReturnType<typeof setInterval> | undefined
 
 /** CLI runner — when empty, the running Orca app's CLI is found and used. Tests swap in a fake. */
 export const cli: { run: CliRunner | null } = { run: null }
+
+/** The app's schedules file is a few kilobytes; anything far past that is not it. */
+const ORCA_CRON_MAX_BYTES = 5_000_000
+
+/** Where OrcaCron keeps its data, and how a file there is read (null = not there). Tests swap these.
+ *  Only a plain file is read: the read is synchronous, and on a pipe it would never return — every
+ *  check and every panel request would wait behind it. */
+export const orcaCron: { dir: () => string; read: (path: string) => string | null } = {
+  dir: () => process.env.ORCA_CRON_HOME || `${homedir()}/.orca-cron`,
+  read: (path) => {
+    const stat = statSync(path, { throwIfNoEntry: false })
+    return stat?.isFile() && stat.size <= ORCA_CRON_MAX_BYTES ? readFileSync(path, 'utf8') : null
+  }
+}
 
 export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   let list = normalize(await orca.storage.get(KEY))
@@ -118,7 +176,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   const noticeText = (n: Notice): string => {
     if (n.status === 'doneWaiting') return `${n.name}: ${words(lang).awaitingAnswer}`
-    const parts = [n.status ? statusText(lang, n.status) : '', n.note ? noteText(lang, n.note) : '', lateText(lang, n.lateMs)].filter(Boolean)
+    const parts = [n.status ? statusText(lang, n.status) : '', n.note ? noteText(lang, n.note) : '', lateText(lang, n.lateMs), n.summary ?? ''].filter(Boolean)
     return `${n.name}: ${parts.join(' — ')}`
   }
 
@@ -157,7 +215,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   const runTick = (): Promise<void> =>
     serial(async () => {
       const now = Date.now()
-      const r = await tick(list, io, memory, now)
+      const r = await tick(list, io, memory, now, lang)
       status.lastTickAt = now
       status.log = [...r.log.map((l) => `${new Date(now).toLocaleTimeString('en-GB')} ${l}`), ...status.log].slice(0, 50)
       for (const l of r.log) orca.log(l)
@@ -211,7 +269,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       const ev = e as StatusEvent
       if (ev.terminalId) memory.agents.set(ev.terminalId, ev.state)
       const seen = await inspectOnEvent(list, ev, io, SETTLE_MS)
-      const r = seen.hold ? { changed: false, notices: [] } : onAgentStatus(list, ev)
+      const r = seen.hold ? { changed: false, notices: [] } : onAgentStatus(list, ev, seen.reports)
       notify([...seen.notices, ...r.notices])
       if (seen.changed || r.changed) await persist()
     })
@@ -235,7 +293,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   orca.panels.handle('terminals.focus', async ({ handle }) => {
     if (!run) return { ok: false }
-    const r = await run(['terminal', 'switch', '--terminal', handle])
+    const r = await run(['terminal', 'switch', `--terminal=${handle}`])
     if (!r.ok) orca.log(`terminal switch ${handle}: ${r.error}`)
     return { ok: r.ok }
   })
@@ -255,6 +313,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
           cron: '',
           prompt: draft.prompt,
           clearFirst: draft.clearFirst === true,
+          report: draft.report === true,
           once: true,
           pendingSince: Date.now()
         }
@@ -275,7 +334,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         cron: draft.cron.trim(),
         prompt: draft.prompt,
         enabled: draft.enabled,
-        clearFirst: draft.clearFirst === true
+        clearFirst: draft.clearFirst === true,
+        report: draft.report === true
       }
       s.nextRunAt = s.enabled ? nextRunAt : null
       list = old ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s]
@@ -334,6 +394,61 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   })
 
   orca.panels.handle('runner.status', () => status)
+
+  /** OrcaCron's schedules with their terminals matched to the ones open now. */
+  const importable = async (): Promise<{ list: ImportList; items: ReturnType<typeof itemsFrom>; open: TerminalOption[] }> => {
+    const dir = orcaCron.dir()
+    const shown = dir.startsWith(`${homedir()}/`) ? `~${dir.slice(homedir().length)}` : dir
+    let file: unknown = null
+    let found = false
+    try {
+      const text = orcaCron.read(`${dir}/schedules.json`)
+      found = text !== null
+      file = text === null ? null : JSON.parse(text)
+    } catch (error) {
+      orca.log(`OrcaCron schedules: ${(error as Error).message}`)
+    }
+    const items = itemsFrom(file, `${dir}/tasks`)
+    const open = items.length > 0 ? await terminalOptions().catch(() => []) : []
+    return {
+      items,
+      open,
+      list: {
+        found,
+        dir: shown,
+        items: items.map((i) => {
+          const live = locate(i.terminal, open)
+          return {
+            id: i.id,
+            name: i.name,
+            cron: i.cron,
+            terminal: live ?? i.terminal,
+            open: live !== null,
+            imported: list.some((s) => s.id === importedId(i.id)),
+            badCron: i.badCron
+          }
+        })
+      }
+    }
+  }
+
+  orca.panels.handle('orcacron.list', async () => (await importable()).list)
+
+  orca.panels.handle('orcacron.import', ({ ids }) =>
+    serial(async () => {
+      const { items, open } = await importable()
+      const wanted = new Set(Array.isArray(ids) ? ids : [])
+      const fresh = items
+        .filter((i) => wanted.has(i.id) && !i.badCron && !list.some((s) => s.id === importedId(i.id)))
+        .map((i) => scheduleFrom(i, locate(i.terminal, open) ?? i.terminal))
+      if (fresh.length > 0) {
+        list = [...list, ...fresh]
+        await persist()
+        void pushTerminals()
+      }
+      return { added: fresh.length }
+    })
+  )
 
   updateStatusBar()
   if (timer) clearInterval(timer)

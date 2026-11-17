@@ -41,10 +41,8 @@ test('send — text as is, Enter, wait up to 8 s for the turn to start', () => {
   assert.deepEqual(sendArgs('term_a', "quotes ' and $HOME stay"), [
     'terminal',
     'send',
-    '--terminal',
-    'term_a',
-    '--text',
-    "quotes ' and $HOME stay",
+    '--terminal=term_a',
+    "--text=quotes ' and $HOME stay",
     '--enter',
     '--wait-submit',
     '8'
@@ -64,4 +62,11 @@ test('a blink in the agent is held for a while by pane — not for a terminal ne
   assert.deepEqual(agents(holdAgents([t(null, 'h2')], seen, 50_000, 60_000)), ['claude'], 'by pane, though the handle changed')
   assert.deepEqual(agents(holdAgents([t(null)], seen, 61_000, 60_000)), [null], 'gone longer than that — the agent has quit')
   assert.deepEqual(agents(holdAgents([t('codex')], seen, 62_000, 60_000)), ['codex'], 'what Orca says now wins')
+})
+
+test('send — a prompt that starts with -- stays the text, not another flag', () => {
+  // Given apart from --text, the CLI reads it as a flag: "Unknown flag", or its help for --help (Orca 1.4.261).
+  for (const text of ['--- weekly check ---', '--help', '--terminal=term_b', '--enter']) {
+    assert.deepEqual(sendArgs('term_a', text), ['terminal', 'send', '--terminal=term_a', `--text=${text}`, '--enter', '--wait-submit', '8'], 'never an argument of its own')
+  }
 })

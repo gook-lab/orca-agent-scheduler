@@ -202,7 +202,7 @@ function daysText(days: Days, lang: Lang): string {
     case 'weekdays':
       return lang === 'ko' ? '평일' : 'Weekdays'
     case 'weekends':
-      return lang === 'ko' ? '휴일' : 'Weekends'
+      return lang === 'ko' ? '주말' : 'Weekends'
     case 'some': {
       const names = [...days.set].sort((a, b) => weekOrder(a) - weekOrder(b)).map((d) => w.weekdays[d])
       return lang === 'ko' ? `매주 ${names.join('·')}` : `Every ${names.join('·')}`
@@ -260,9 +260,15 @@ export function describe(expression: string, lang: Lang): string {
   return spec ? specSummary(spec, lang) : expression
 }
 
-/** A typed time → minute of the day. Takes `9:30`, `09:30`, `930`, `0930`, `9`, `9시 30분`, `7.05`. */
+const halfDay = /a\.?m\.?|p\.?m\.?|오전|오후/gi
+
+/** A typed time → minute of the day. Takes `9:30`, `09:30`, `930`, `0930`, `9`, `9시 30분`, `7.05`, and a
+ *  12-hour time said with its half — `9:30 pm`, `9pm`, `오후 9시`. */
 export function minuteFromText(text: string): number | null {
-  let t = text.trim().replace(/분/g, '').replace(/시/g, ':').replace(/\./g, ':').replace(/\s/g, '')
+  const [said, ...more] = text.match(halfDay) ?? []
+  if (more.length > 0) return null
+  const half = said === undefined ? null : /^p|오후/i.test(said) ? 'pm' : 'am'
+  let t = text.replace(halfDay, '').trim().replace(/분/g, '').replace(/시/g, ':').replace(/\./g, ':').replace(/\s/g, '')
   if (t.endsWith(':')) t = t.slice(0, -1)
   const parts = t.split(':')
   let h: number
@@ -280,6 +286,20 @@ export function minuteFromText(text: string): number | null {
       m = Number(t.slice(-2))
     } else return null
   } else return null
+  if (half) {
+    if (h < 1 || h > 12) return null
+    h = (h % 12) + (half === 'pm' ? 12 : 0)
+  }
   if (h > 23 || m > 59) return null
   return h * 60 + m
+}
+
+/** The clock the times are read on — this computer's zone, as `Asia/Seoul, UTC+9`. */
+export function zoneText(now: Date = new Date()): string {
+  const offset = -now.getTimezoneOffset()
+  const hours = Math.floor(Math.abs(offset) / 60)
+  const minutes = Math.abs(offset) % 60
+  const utc = `UTC${offset < 0 ? '−' : '+'}${hours}${minutes ? `:${String(minutes).padStart(2, '0')}` : ''}`
+  const name = Intl.DateTimeFormat().resolvedOptions().timeZone
+  return name ? `${name}, ${utc}` : utc
 }

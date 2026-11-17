@@ -1,6 +1,34 @@
 # Changelog
 
-Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one.
+Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
+
+## 0.10.0 — 2026-11-17
+
+- **Ask for a one-line result.** A schedule can ask the agent to end its reply with `[result <tag> ok|failed|skipped] summary [link] URL [end]`. When the run ends the worker reads that line off the terminal screen, and the record shows Succeeded, Failed or Skipped with the summary and the link. The agent only prints text, so nothing new needs permission. On by default for a new schedule, off for Send once and for schedules saved before; a prompt that starts with `/` never gets the sentence. README "Result".
+- **Import from OrcaCron.** Where the menubar app's schedules are on the computer, Settings lists them and copies them over — name, times, terminal, what to send — switched off, so nothing goes out twice while the app still runs its own. README "Import from OrcaCron".
+- A failure notification carries the summary the agent gave.
+- **What's new** under *How sending works* opens the release notes — what each version changed.
+- `orca plugin check` draws one more scene, `result`.
+
+Fixed
+
+- A prompt that starts with `--` was read by the Orca CLI as a flag and never sent (`Unknown flag`, or the CLI's help for `--help`). The text now goes as `--text=<prompt>`.
+- A second schedule could send into a terminal while another schedule's run there was still going, and both were then closed by the same reply. It now waits for that run to end.
+- A date more than 400 days ahead — a picked date in a later year, or 29 February — was saved as "never runs again". The search now runs to the rule's last year, or eight years.
+- One stored schedule that could not be read (a number where the times go, an empty history entry) stopped every schedule, or the worker itself. Storage is now read field by field.
+- A one-off send did not show its result — the note, how long it took, the summary and link were recorded but not drawn.
+- A run that stopped at a question was green like a finished one; it is orange now.
+- Searching did not open a folded block, so a found schedule stayed out of sight.
+- History counted 30 records and showed 10; it shows all it counts.
+- Import: "Everything is already imported" also showed when what was left could not be imported.
+
+Changed
+
+- A run asked for a result that ends without the line says `No result line on screen` in its record.
+- The 6-hour status reads **Timed out** (was "No result", which now means something else).
+- The form says which clock the times are on (`Asia/Seoul, UTC+9`), and takes `9:30 pm` as well as `21:30`.
+- Result links with a name before the site (`user@site`) are dropped, and a link shows its site in full.
+- Korean: 휴일 → 주말 for Saturday and Sunday.
 
 ## 0.9.13 — 2026-11-17
 

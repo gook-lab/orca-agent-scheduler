@@ -504,8 +504,8 @@ function Nav() {
   return (
     <Stack gap="xs">
       <Tabs label={u.view} value={read(tab)} onChange={(v) => (v === 'terminals' ? showTerminals() : set(tab, 'schedules'))}>
-        <Tab value="schedules" label={u.tabSchedules(read(schedules).filter((s) => !s.once).length)} />
-        <Tab value="terminals" label={u.tabTerminals(read(terminals)?.length ?? 0)} />
+        <Tab value="schedules" label={u.tabSchedules(read(schedulesLoaded) ? read(schedules).filter((s) => !s.once).length : null)} />
+        <Tab value="terminals" label={u.tabTerminals(read(terminals)?.length ?? null)} />
       </Tabs>
       <Input type="search" label={u.find} labelHidden value={read(query)} placeholder={u.findPlaceholder} onChange={(v) => set(query, v)} />
     </Stack>
@@ -719,13 +719,14 @@ function SentList({ list }: { list: Schedule[] }) {
   const u = words(l).ui
   const at = (s: Schedule) => s.sentAt ?? s.pendingSince ?? s.history[0]?.at ?? 0
   const sorted = [...list].sort((a, b) => at(b) - at(a))
-  const busy = sorted.some((s) => s.pendingSince !== null || s.sentAt !== null)
+  const waiting = sorted.filter((s) => s.pendingSince !== null).length
+  const busy = waiting > 0 || sorted.some((s) => s.sentAt !== null)
   // Open is read only when drawn first, so a new send keyed by the newest record draws it afresh — open
   // while it waits or runs. It stays as it is when that send ends; a fold by hand holds until the next one.
   return (
     <Collapsible
       key={`sent-${sorted[0]?.id ?? ''}`}
-      title={u.sentGroup(sorted.length, sorted[0] ? whenText(l, at(sorted[0])) : null)}
+      title={u.sentGroup(sorted.length - waiting, waiting, sorted[0] ? whenText(l, at(sorted[0])) : null)}
       defaultOpen={busy}
     >
       <Stack gap="xs">

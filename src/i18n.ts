@@ -163,10 +163,15 @@ const en = {
     collapse: 'Collapse',
     expand: 'Expand',
     groupSummary: (n: number, next: string | null) => `${n === 1 ? '1 schedule' : `${n} schedules`}${next ? ` · next ${next}` : ''}`,
-    sentGroup: (n: number, last: string | null) => `Sent ${n}${last ? ` · last ${last}` : ''}`,
+    // Waiting ones are counted apart — a send stuck on a closed terminal has not been sent.
+    sentGroup: (sent: number, waiting: number, last: string | null) =>
+      [waiting ? `Waiting to send ${waiting}` : '', sent ? `Sent ${sent}` : '', !waiting && last ? `last ${last}` : '']
+        .filter(Boolean)
+        .join(' · '),
     view: 'View',
-    tabSchedules: (n: number) => `Schedules ${n}`,
-    tabTerminals: (n: number) => `Terminals ${n}`,
+    // No number while the list is still being read — 0 would read as "none".
+    tabSchedules: (n: number | null) => (n === null ? 'Schedules' : `Schedules ${n}`),
+    tabTerminals: (n: number | null) => (n === null ? 'Terminals' : `Terminals ${n}`),
     find: 'Find',
     findPlaceholder: 'Find schedules or terminals',
     noMatch: (q: string) => `Nothing matches “${q}”`,
@@ -368,10 +373,13 @@ const ko: Words = {
     collapse: '접기',
     expand: '펼치기',
     groupSummary: (n, next) => `예약 ${n}${next ? ` · 다음 ${next}` : ''}`,
-    sentGroup: (n, last) => `보낸 기록 ${n}${last ? ` · 마지막 ${last}` : ''}`,
+    sentGroup: (sent, waiting, last) =>
+      [waiting ? `보내기 대기 ${waiting}` : '', sent ? `보낸 기록 ${sent}` : '', !waiting && last ? `마지막 ${last}` : '']
+        .filter(Boolean)
+        .join(' · '),
     view: '보기',
-    tabSchedules: (n) => `예약 ${n}`,
-    tabTerminals: (n) => `터미널 ${n}`,
+    tabSchedules: (n) => (n === null ? '예약' : `예약 ${n}`),
+    tabTerminals: (n) => (n === null ? '터미널' : `터미널 ${n}`),
     find: '찾기',
     findPlaceholder: '예약·터미널 찾기',
     noMatch: (q) => `「${q}」와 맞는 항목이 없습니다`,

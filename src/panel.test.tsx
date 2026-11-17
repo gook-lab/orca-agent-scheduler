@@ -348,6 +348,21 @@ test('sent records sit folded under their terminal', async () => {
   await view.unmount()
 })
 
+test('the sent group counts sends still waiting apart from those sent', async () => {
+  const view = await mount(panel, { host: host() })
+  const one = (id: string, extra: Partial<Schedule>): Schedule => ({ ...blankSchedule(id), once: true, name: id, terminal: { ...open[0] }, cron: '', ...extra })
+  const waiting = one('w1', { pendingSince: Date.now(), waitNote: { code: 'missing' } })
+  const done = (id: string, m: number) => one(id, { lastStatus: 'done', history: [{ at: at(12, m), status: 'done' } as never] })
+  const title = () => view.findAll({ type: 'Collapsible' }).map((e) => String(e.props.title))
+  await view.post('schedules.changed', { schedules: [waiting] })
+  assert.deepEqual(title(), ['Waiting to send 1'], 'nothing has gone out yet')
+  await view.post('schedules.changed', { schedules: [waiting, done('d1', 3), done('d2', 1)] })
+  assert.deepEqual(title(), ['Waiting to send 1 · Sent 2'])
+  await view.post('schedules.changed', { schedules: [done('d1', 3), done('d2', 1)] })
+  assert.deepEqual(title(), ['Sent 2 · last today 12:03'])
+  await view.unmount()
+})
+
 test('duplicate opens a copy; delete offers Undo', async () => {
   const saved: ScheduleDraft[] = []
   const deleted: string[] = []
@@ -664,9 +679,12 @@ test('a run being sent spins; before the first answer both tabs show a placehold
   // The component alone, before setup has asked the worker anything.
   const early = await mount(panel.default!, { host: host() })
   assert.ok(early.find({ type: 'Skeleton', label: 'Reading the list' }), 'not "No schedules yet" yet')
+  const tabs = () => early.findAll({ type: 'Tab' }).map((e) => e.props.label)
+  assert.deepEqual(tabs(), ['Schedules', 'Terminals'], 'no 0 while reading — it would read as none')
   assert.equal(early.find({ label: 'No schedules yet' }), null)
   await early.select({ type: 'Tabs' }, 'terminals')
   assert.ok(early.find({ type: 'Text', text: 'sonix_docs' }), 'entering Terminals reads the list itself')
+  assert.deepEqual(tabs(), ['Schedules', `Terminals ${open.length}`], 'the number comes with the answer')
   await early.unmount()
 })
 

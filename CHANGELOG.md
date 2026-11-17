@@ -2,6 +2,10 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.11.1 — 2026-11-17
+
+- **The favorite star shows that it is on.** It was the same outline star either way: Orca's ghost buttons ignore their tone, so the accent meant to mark a favorite never showed, and with a single terminal block there was no order to change either — a press looked like it did nothing. It is now ☆ when off and ★ when on.
+
 ## 0.11.0 — 2026-11-17
 
 The schedule card, redone for a glance.

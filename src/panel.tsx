@@ -646,14 +646,11 @@ function TerminalLine({
       {fold ? (
         <IconButton icon={fold.open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={fold.open ? u.collapse : u.expand} onPress={fold.toggle} />
       ) : null}
-      <IconButton
-        icon="star"
-        size="xs"
-        variant="ghost"
-        tone={fav ? 'accent' : 'neutral'}
-        label={fav ? u.unfavorite : u.favorite}
-        onPress={() => toggleFavorite(live ?? t)}
-      />
+      {/* Two marks, not the star icon with a tone: a ghost button ignores its tone, so on and off looked
+          the same and a press seemed to do nothing. A button takes only text — hence no colour. */}
+      <Button size="xs" variant="ghost" tooltip={fav ? u.unfavorite : u.favorite} onPress={() => toggleFavorite(live ?? t)}>
+        {fav ? '★' : '☆'}
+      </Button>
       <Box shrink={false}>
         <Text size="xs" weight="semibold" tone={live ? 'accent' : 'neutral'} muted={!live}>
           {kind ? agentGlyph[kind] : '•'}

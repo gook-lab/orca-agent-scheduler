@@ -2,6 +2,16 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.3 — 2026-11-17
+
+A folded card says why a run did not go well.
+
+- **One line of what the agent wrote, under the last run.** A card whose last run failed, timed out, was stopped or ended at a question said `Failed today 20:05 · took 33 min` and no more; the reason was one press away. The folded card has it now, starting at the name's edge. A card whose last run went well or was skipped is as before, and so is one the agent wrote nothing about.
+- **Cut where it runs out.** The line does not wrap, so such a card is 16 px higher (102 px; 86 without) whatever the agent wrote — a result line can carry 300 characters. The whole of it opens with the card, as before.
+- The count on top is as before: `need attention` is for what stops a send, not for how a run ended.
+
+Drawn on the real panel at 280 and 457 px before it was built, with the wrapped line beside it. The pictures in the README are still those of 0.12.1.
+
 ## 0.12.2 — 2026-11-17
 
 Room between the cards and inside them.

@@ -760,7 +760,8 @@ export function linkParts(url: string): { site: string; path: string } {
 function RecordDetail({ r, glance }: { r: RunRecord; glance?: boolean }) {
   const l = read(lang)
   // A folded card says when the last run was and how long it took. What the agent wrote, its link and
-  // the why are a click away, with the rest of the card.
+  // how the end was seen are a click away, with the rest of the card — RecordLine adds one line of
+  // what the agent wrote when the run did not go well.
   if (glance)
     return (
       <Text muted size="xs">
@@ -782,9 +783,14 @@ function RecordDetail({ r, glance }: { r: RunRecord; glance?: boolean }) {
   )
 }
 
+/** The results a person has to do something about: a folded card says why, in what the agent wrote. */
+const wentWrong = (status: RunRecord['status']): boolean =>
+  status === 'failed' || status === 'noResult' || status === 'aborted' || status === 'doneWaiting'
+
 function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
   const status = statusText(read(lang), r.status)
-  return (
+  const why = glance && wentWrong(r.status) && r.summary ? r.summary : null
+  const row = (
     <Box direction="row" align="start" gap="xs">
       {glance ? (
         // A word, not a badge: the mark at the card's left already has the colour.
@@ -799,6 +805,17 @@ function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
       <Box grow shrink minWidth={0}>
         <RecordDetail r={r} glance={glance} />
       </Box>
+    </Box>
+  )
+  if (!why) return row
+  return (
+    <Box>
+      {row}
+      {/* One line, cut where it runs out, so a card's height does not follow what an agent wrote; it
+          starts at the name's edge and the whole of it opens with the card. */}
+      <Text size="xs" truncate>
+        {why}
+      </Text>
     </Box>
   )
 }
@@ -851,8 +868,9 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
   const mark = markOf(s, { urgent, queued, gone })
   return (
     // Folded, a card says what a glance is for: which schedule, when it runs next, how the last run
-    // went. What the agent wrote, the rule, the prompt, the history and what is done now and then —
-    // edit, duplicate, delete — open in place: Orca's panel kit has no menu that pops up.
+    // went — and why, in one line, when it did not go well. The whole of what the agent wrote, the
+    // rule, the prompt, the history and what is done now and then — edit, duplicate, delete — open
+    // in place: Orca's panel kit has no menu that pops up.
     // A filled surface, like a list of cards rather than a form. The border stays: a light theme
     // gives the card surface the panel's own colour, and only the line then shows where a card ends.
     // Just saved: tinted for a moment — no badge row, so nothing below moves when it goes.

@@ -1377,3 +1377,50 @@ test('a folded card is for a glance — name, next run, how the last one went; t
   assert.ok(texts().includes('today 15:44 · took 17 min'), 'folded again, the short line is back')
   await view.unmount()
 })
+
+test('a folded card says why the last run did not go well — one line of what the agent wrote, cut where it runs out', async () => {
+  const view = await mount(panel, { host: host() })
+  type Last = NonNullable<Schedule['lastStatus']>
+  const ran = (id: string, status: Last, summary?: string): Schedule => ({
+    ...blankSchedule(id),
+    name: `Check ${id}`,
+    terminal: { ...open[0] },
+    prompt: 'x',
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: status,
+    history: [{ at: Date.now() - 3600_000, status, tookMs: 60_000, ...(summary ? { summary } : {}) }]
+  })
+  const wrong: Last[] = ['failed', 'noResult', 'aborted', 'doneWaiting']
+  const fine: Last[] = ['success', 'done', 'skipped']
+  const long = `Could not publish the board: ${'the script stopped at the sign-in step, '.repeat(6)}and asked for a new token`
+  const all = (said: boolean): Schedule[] => [
+    ...wrong.map((status) => ran(status, status, said ? `why ${status}` : undefined)),
+    ...fine.map((status) => ran(status, status, said ? `said ${status}` : undefined)),
+    ran('long', 'failed', said ? long : undefined),
+    ran('silent', 'failed')
+  ]
+  const shown = (text: string) => view.findAll({ type: 'Text' }).filter((e) => plain(e.text) === text)
+  const cut = (): number => view.findAll({ type: 'Text' }).filter((e) => e.props.truncate === true).length
+
+  await view.post('schedules.changed', { schedules: all(false) })
+  const without = cut()
+  await view.post('schedules.changed', { schedules: all(true) })
+  for (const status of wrong) {
+    const [line, ...more] = shown(`why ${status}`)
+    assert.ok(line && more.length === 0, `${status}: what the agent wrote, on the folded card`)
+    assert.equal(line.props.truncate, true, `${status}: one line, so the card's height does not follow the text`)
+  }
+  for (const status of fine) assert.equal(shown(`said ${status}`).length, 0, `${status}: nothing to act on — it opens with the card`)
+  assert.equal(shown(long)[0]?.props.truncate, true, 'a long one is handed over whole and cut at the edge of the card')
+  assert.equal(cut(), without + wrong.length + 1, 'no line for a failed run the agent wrote nothing about, nor for the ones that went well')
+
+  await unfold(view)
+  for (const status of wrong) {
+    const lines = shown(`why ${status}`)
+    assert.equal(lines.length, 1, `${status}: opened, it is said once`)
+    assert.notEqual(lines[0].props.truncate, true, `${status}: and whole`)
+  }
+  assert.equal(shown('said success').length, 1, 'opened: what the agent wrote, as before')
+  assert.equal(cut(), without, 'nothing is cut in an opened card')
+  await view.unmount()
+})

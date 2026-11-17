@@ -2,6 +2,13 @@
 
 Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times. It waits until that terminal is idle, sends through the Orca CLI, and records when the agent finishes. The plugin grew out of the menubar app [OrcaCron](https://github.com/gook-lab/orca-cron) and keeps its own schedules; the two do not share data.
 
+<p>
+  <img src="https://raw.githubusercontent.com/gook-lab/orca-agent-scheduler/main/docs/panel-schedules.png" width="300" align="top" alt="The Schedules tab with three schedules under their terminals: one done, one running, one waiting while the agent works">
+  <img src="https://raw.githubusercontent.com/gook-lab/orca-agent-scheduler/main/docs/panel-first.png" width="300" align="top" alt="The first page of the introduction: Prompts on a schedule">
+</p>
+
+The panel in Orca's right sidebar: schedules grouped by terminal, and the introduction shown the first time it opens. Both pictures are drawn from the demo data in `src/panel.check.ts`.
+
 ## Install
 
 ```sh
@@ -107,4 +114,11 @@ $ORCA plugin test .                # tests: schedule maths, screen checks, engin
 $ORCA plugin check . --json        # draws the panel once per scenario
 npx -p typescript tsc -p . --noEmit
 $ORCA plugin dev watch . --check   # load into Orca, reload on each edit (a new permission needs a new approval)
+```
+
+The README pictures are scenarios from `src/panel.check.ts`, shot while Orca's window is hidden or minimized (the dev plugin must be loaded):
+
+```bash
+$ORCA plugin shot . --scenario open  --theme dark --width 360 --out docs/panel-schedules.png
+$ORCA plugin shot . --scenario first --theme dark --width 360 --out docs/panel-first.png
 ```

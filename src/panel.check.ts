@@ -1,5 +1,6 @@
 // `orca plugin check` draws the panel once per situation (the worker runs on the same fake host).
 import { defineCheck } from 'orca/testing'
+import type { Schedule } from './engine'
 
 const now = Date.now()
 const terminal = (handle: string, title: string, agent: string, workspace: string) => ({
@@ -20,6 +21,7 @@ const base = {
   waitNote: null,
   clearedFor: null,
   sentAt: null,
+  lateMs: null,
   sawWorking: false,
   blocked: null,
   lastStatus: null,
@@ -37,7 +39,7 @@ const results = {
   'statusBar.update': { ok: true }
 }
 
-const schedules = [
+const schedules: Schedule[] = [
   {
     ...base,
     id: 's1',
@@ -83,9 +85,25 @@ const schedules = [
   }
 ]
 
+// The usual day: every terminal open, one run going, one waiting its turn. The worker here has no Orca
+// CLI, so its answers are given instead; `busy` and `korean` keep the worker's own (the no-CLI warnings).
+const open = schedules.map((s): Schedule =>
+  s.id === 's2' ? { ...s, blocked: null } : s.id === 's3' ? { ...s, waitNote: { code: 'busy' } } : s
+)
+const terminals = schedules.slice(0, 3).map((s) => s.terminal)
+
 export default defineCheck({
   first: { results },
   empty: { results, storage: { onboarded: true } },
+  open: {
+    results,
+    storage: { onboarded: true },
+    requests: {
+      'schedules.list': () => open,
+      'terminals.list': () => terminals,
+      'runner.status': () => ({ lastTickAt: now, log: [], cli: true })
+    }
+  },
   busy: { results, storage: { onboarded: true, schedules } },
   korean: { results, storage: { onboarded: true, schedules, langPref: 'ko' } }
 })

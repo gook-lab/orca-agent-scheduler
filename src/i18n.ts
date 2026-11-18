@@ -65,7 +65,7 @@ const en = {
   note: {
     busy: 'Agent is working',
     dialog: 'A permission or question dialog is open',
-    moving: 'Screen changed in the last minute (working or typing)',
+    moving: 'Screen changed a moment ago (working or typing)',
     typing: 'Unsent text in the input box',
     noPrompt: 'Input box not visible (a dialog may be open)',
     unreadable: 'Could not read the screen (will retry)',
@@ -303,7 +303,7 @@ const ko: Words = {
   note: {
     busy: '에이전트가 작업 중',
     dialog: '권한·질문 창이 떠 있음',
-    moving: '화면이 1분 안에 움직임(작업 중이거나 입력 중)',
+    moving: '화면이 방금 움직임(작업 중이거나 입력 중)',
     typing: '입력 칸에 쓰던 글이 있음',
     noPrompt: '입력 칸이 보이지 않음(질문·선택 창이 떠 있을 수 있음)',
     unreadable: '터미널 화면을 읽지 못함(잠시 뒤 다시)',

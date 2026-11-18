@@ -92,9 +92,12 @@ export type Memory = {
   screens: Map<string, { hash: string; changedAt: number }>
   /** The latest agent.status.changed state per terminal. */
   agents: Map<string, AgentStatus>
+  /** Ids of schedules whose waiting run a person asked for just now (Send now, Send once) — it goes out
+   *  after limits.askedQuietMs, not the full minute. Forgotten once the run goes out or is given up. */
+  asked: Set<string>
 }
 
-export const newMemory = (): Memory => ({ screens: new Map(), agents: new Map() })
+export const newMemory = (): Memory => ({ screens: new Map(), agents: new Map(), asked: new Set() })
 
 export const limits = {
   /** A due run that cannot go out for this long is skipped. */
@@ -103,6 +106,12 @@ export const limits = {
   resultTimeoutMs: 6 * 3600_000,
   /** Send only after the terminal has printed nothing for this long. */
   quietMs: 60_000,
+  /** The same for a run a person asked for just now: they are looking at the terminal, and behind a full
+   *  minute a press reads as nothing happening (a resting agent that had just printed — 92 and 151 s,
+   *  2026-11-18). The other checks stay: a working agent, text in the input box, a dialog. */
+  askedQuietMs: 5_000,
+  /** While only a moving screen holds such a run it is looked at again this soon, not at the next check. */
+  askedCheckMs: 3_000,
   /** Quiet this long after sending — an empty input box means done, anything else means stuck. */
   finishedQuietMs: 3 * 60_000,
   /** A run that ended without its result line is still looked at for this long: an agent that ended its
@@ -372,7 +381,7 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       waitOrGiveUp('busy')
       return
     }
-    if (quiet < limits.quietMs) {
+    if (quiet < (memory.asked.has(s.id) ? limits.askedQuietMs : limits.quietMs)) {
       waitOrGiveUp('moving')
       return
     }
@@ -436,8 +445,14 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       log.push(`${s.name}: check failed — ${errorText(error)}`)
     }
   }
+  // Asked for by hand only until it goes out or is given up — the schedule's next run waits the minute.
+  for (const id of memory.asked) if (!list.some((s) => s.id === id && s.pendingSince !== null)) memory.asked.delete(id)
   return { log, notices }
 }
+
+/** A run asked for by hand that only a moving screen holds — worth another look within seconds. */
+export const askedSoon = (list: Schedule[], memory: Memory): boolean =>
+  list.some((s) => memory.asked.has(s.id) && s.pendingSince !== null && s.sentAt === null && (s.waitNote?.code === 'moving' || s.waitNote?.code === 'cleared'))
 
 async function watch(
   s: Schedule,

@@ -376,7 +376,7 @@ test('Schedules has one block per terminal — closed ones keep theirs; Terminal
   const gone: Schedule = { ...blankSchedule('s2'), name: 'Old', terminal: { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, prompt: 'x' }
   await view.post('schedules.changed', { schedules: [running, gone] })
   assert.ok(view.find({ type: 'Text', text: 'Waiting to send' }))
-  assert.equal(view.find({ text: 'Screen changed in the last minute (working or typing)' })?.props.muted, true, 'an ordinary wait stays grey')
+  assert.equal(view.find({ text: 'Screen changed a moment ago (working or typing)' })?.props.muted, true, 'an ordinary wait stays grey')
   assert.ok(view.find({ text: /This terminal is closed/ }))
   assert.equal(titled(view, 'Callout', 'Check'), null, 'nothing here needs a person yet — the count on top says 0 too')
   assert.equal(view.find({ text: 'Done' }), null, 'folded: the run that waits takes the place of the one before it')
@@ -763,7 +763,7 @@ test('a one-off waiting its turn is grey; one stuck on a closed terminal is oran
     waitNote: { code }
   })
   await view.post('schedules.changed', { schedules: [once('o1', open[0], 'moving'), once('o2', { ...open[1], handle: 'h-gone', leafId: 'l-gone' }, 'missing')] })
-  const moving = view.find({ text: 'Screen changed in the last minute (working or typing)' })
+  const moving = view.find({ text: 'Screen changed a moment ago (working or typing)' })
   assert.equal(moving?.props.tone, undefined)
   assert.equal(moving?.props.muted, true)
   assert.equal(view.find({ text: 'Terminal is not open — waiting for it' })?.props.tone, 'warning')

@@ -2,6 +2,26 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.6 — 2026-11-18
+
+Send now means seconds on a resting terminal.
+
+- **A run a person asks for waits for 5 still seconds, not a minute.** Send now (▷) and Send once skip the schedule's time, but they went through the same idle check as a scheduled run, and "nothing new on screen for a minute" held them on an agent that was only resting: pressed right after an agent's turn, or on a terminal opened a moment ago, the prompt went out a minute or two later with `Waiting to send` on the card the whole time. For these two the screen now has to be still for 5 seconds.
+- **While only that holds the run it is looked at again every 3 seconds**, not at the next 30-second check — and at once when an agent reports a stop.
+- **The other checks are the same.** Nothing is typed into a working agent, onto text left in the input box, or into a dialog. A scheduled run still waits the full minute: nobody is looking at the terminal then, and a minute costs nothing.
+- The reason on a waiting card reads `Screen changed a moment ago`, whichever limit applies.
+
+Measured on a test terminal with Claude Code, before and after:
+
+| Pressed | 0.12.5 | 0.12.6 |
+|---|---|---|
+| on a terminal quiet for a while | 1.7 s | 1.6 s |
+| on a resting agent opened a moment ago | 151 s | 5.5 s |
+| while the agent was writing an answer | 92 s | 6.9 s after it stopped |
+| the same, the plugin restarted during the turn (no word from Orca that the agent works) | — | 7.0 s after it stopped |
+
+In the last row only the still screen stands between the press and a working agent. A working Claude Code prints the whole time, so the run waited (`Screen changed a moment ago`) until the turn was over; an agent that shows nothing new for 5 seconds while it works would get the prompt behind its turn.
+
 ## 0.12.5 — 2026-11-18
 
 Nothing above the list that the list already says.

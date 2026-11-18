@@ -2,7 +2,7 @@
 import { mock } from 'node:test'
 import { afterEach, assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { CliResult } from './cli'
-import { blankSchedule, type Schedule } from './engine'
+import { blankSchedule, limits, type Schedule } from './engine'
 import { importedId } from './orcacron'
 import type { ImportList, RunnerStatus, TerminalOption } from './protocol'
 import { reportToken } from './report'
@@ -160,6 +160,126 @@ test('send now while that schedule\'s run is going does not queue a second send'
   await worker.deactivate()
   main.cli.run = null
 })
+
+/** Runs with the limits for a run asked for by hand shrunk, so a test need not wait real seconds. */
+async function quickAsked(fn: () => Promise<void>): Promise<void> {
+  const kept = { quiet: limits.askedQuietMs, check: limits.askedCheckMs }
+  limits.askedQuietMs = 300
+  limits.askedCheckMs = 100
+  try {
+    await fn()
+  } finally {
+    limits.askedQuietMs = kept.quiet
+    limits.askedCheckMs = kept.check
+  }
+}
+/** One agent terminal that printed at `at`. */
+const printedAt = (at: number): CliResult => ({
+  ok: true,
+  result: { terminals: [{ handle: 'h1', title: 'Morning', agentIdentity: 'claude', worktreeId: 'w1', tabId: 't1', leafId: 'l1', lastOutputAt: at, writable: true }] }
+})
+const later = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const status = (state: 'working' | 'done') => ({ workspaceId: null, paneKey: 'p', terminalId: 'h1', state, receivedAt: Date.now() })
+
+test('send now on a resting terminal that just printed — looked at again within seconds, not at the next 30-second check', () =>
+  quickAsked(async () => {
+    const calls = fakeCli({ list: printedAt(Date.now()) })
+    const h = host()
+    const worker = await mountWorker(main, { host: h })
+    const s = (await worker.request('schedules.save', draft)) as Schedule
+    await worker.request('schedules.runNow', { id: s.id })
+    await settle()
+    assert.deepEqual(sentText(calls), [], 'the screen printed a moment ago')
+    assert.deepEqual((h.data().storage.schedules as Schedule[])[0].waitNote, { code: 'moving' })
+    await later(700)
+    assert.deepEqual(sentText(calls), ['Plan the day'], 'sent once still for the shortened limit — the 30-second timer never fired here')
+    await worker.deactivate()
+  }))
+
+test('Send once is asked for by hand as well', () =>
+  quickAsked(async () => {
+    const calls = fakeCli({ list: printedAt(Date.now()) })
+    const worker = await mountWorker(main, { host: host() })
+    await worker.request('schedules.save', { ...draft, name: '', once: true })
+    await later(700)
+    assert.deepEqual(sentText(calls), ['Plan the day'])
+    await worker.deactivate()
+  }))
+
+test('a scheduled run held by the same screen keeps the 30-second pace and the full minute', () =>
+  quickAsked(async () => {
+    const calls = fakeCli({ list: printedAt(Date.now()) })
+    const waiting: Schedule = { ...blankSchedule('s1'), ...draft, pendingSince: Date.now() }
+    const worker = await mountWorker(main, { host: host({ schedules: [waiting] }) })
+    await later(700)
+    assert.deepEqual(sentText(calls), [])
+    assert.equal(calls.filter((c) => c[1] === 'list').length, 2, 'one check: its read of the terminal list, and the one for the panel after it')
+    await worker.deactivate()
+  }))
+
+test('send now behind a working agent goes out when the agent stops — its stop brings the next look', () =>
+  quickAsked(async () => {
+    const calls = fakeCli({ list: printedAt(Date.now()) })
+    const h = host()
+    const worker = await mountWorker(main, { host: h })
+    const s = (await worker.request('schedules.save', draft)) as Schedule
+    await worker.emit('agent.status.changed', status('working'))
+    await worker.request('schedules.runNow', { id: s.id })
+    await later(700)
+    assert.deepEqual(sentText(calls), [], 'still for longer than the shortened limit, but the agent is working')
+    assert.deepEqual((h.data().storage.schedules as Schedule[])[0].waitNote, { code: 'busy' })
+    await worker.emit('agent.status.changed', status('done'))
+    await later(200)
+    assert.deepEqual(sentText(calls), ['Plan the day'])
+    await worker.deactivate()
+  }))
+
+test('turning the plugin off stops the quick looks at a run asked for by hand', () =>
+  quickAsked(async () => {
+    // Never still for long enough here, so the run keeps waiting.
+    limits.askedQuietMs = 60_000
+    const calls = fakeCli({ list: printedAt(Date.now()) })
+    const h = host()
+    const worker = await mountWorker(main, { host: h })
+    const s = (await worker.request('schedules.save', draft)) as Schedule
+    await worker.request('schedules.runNow', { id: s.id })
+    await later(350)
+    const lists = () => calls.filter((c) => c[1] === 'list').length
+    assert.deepEqual((h.data().storage.schedules as Schedule[])[0].waitNote, { code: 'moving' })
+    assert.ok(lists() >= 6, `looked again every 100 ms while it waited (${lists()} reads of the terminal list)`)
+    await worker.deactivate()
+    const before = lists()
+    await later(350)
+    assert.equal(lists(), before)
+  }))
+
+test('a check still running when the plugin is turned off does not start the quick looks again', () =>
+  quickAsked(async () => {
+    limits.askedQuietMs = 60_000
+    let lists = 0
+    let hold = false
+    const held: (() => void)[] = []
+    const answer = printedAt(Date.now())
+    main.cli.run = (args) => {
+      if (args[1] !== 'list') return Promise.resolve({ ok: true, result: {} })
+      lists++
+      return hold ? new Promise((resolve) => held.push(() => resolve(answer))) : Promise.resolve(answer)
+    }
+    const worker = await mountWorker(main, { host: host() })
+    const s = (await worker.request('schedules.save', draft)) as Schedule
+    await worker.request('schedules.runNow', { id: s.id })
+    await settle()
+    hold = true
+    await later(150)
+    assert.equal(held.length, 1, 'the next quick look is reading the terminal list')
+    await worker.deactivate()
+    hold = false
+    for (const go of held.splice(0)) go()
+    await later(50)
+    const before = lists
+    await later(350)
+    assert.equal(lists, before)
+  }))
 
 test('a sent run ends when the agent works and stops', async () => {
   fakeCli()

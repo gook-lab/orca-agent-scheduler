@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
 import {
+  askedSoon,
   asksReport,
   blankSchedule,
   inspectOnEvent,
@@ -130,6 +131,78 @@ test('without lastOutputAt, a screen seen still for a minute counts as quiet', a
   assert.deepEqual(f.sent, [])
   await tick([s], f.io, memory, nine + 70_000)
   assert.deepEqual(f.sent, [['h1', 'Plan the day']])
+})
+
+test('a run a person asked for goes out after 5 still seconds — the same screen holds a scheduled run for the minute', async () => {
+  const printed = nine - 2000
+  const asked = sched({ pendingSince: nine })
+  const memory = newMemory()
+  memory.asked.add('s1')
+  const f = fakeIo({ live: [term({ lastOutputAt: printed })] })
+  await tick([asked], f.io, memory, nine + 1000)
+  assert.deepEqual(f.sent, [], 'printed 3 s ago')
+  assert.deepEqual(asked.waitNote, { code: 'moving' })
+  assert.equal(askedSoon([asked], memory), true, 'worth another look within seconds')
+  await tick([asked], f.io, memory, nine + 4000)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'printed 6 s ago')
+  assert.equal(memory.asked.has('s1'), false, 'asked for by hand only until it goes out')
+  assert.equal(askedSoon([asked], memory), false)
+
+  const due = sched({ pendingSince: nine })
+  const g = fakeIo({ live: [term({ lastOutputAt: printed })] })
+  const own = newMemory()
+  await tick([due], g.io, own, nine + 4000)
+  assert.deepEqual(g.sent, [], 'the schedule\'s own time: 6 s is not a minute')
+  assert.deepEqual(due.waitNote, { code: 'moving' })
+  assert.equal(askedSoon([due], own), false, 'a scheduled run keeps the 30-second pace')
+})
+
+test('a run a person asked for: text unchanged for 5 seconds is enough while the status line repaints', async () => {
+  const s = sched({ pendingSince: nine })
+  const memory = newMemory()
+  memory.asked.add('s1')
+  const f = fakeIo({ live: [term({ lastOutputAt: nine })] })
+  await tick([s], f.io, memory, nine + 500)
+  f.state.live = [term({ lastOutputAt: nine + 3000 })]
+  await tick([s], f.io, memory, nine + 3500)
+  assert.deepEqual(f.sent, [], 'the same text for 3 s, repainted half a second ago')
+  f.state.live = [term({ lastOutputAt: nine + 6000 })]
+  await tick([s], f.io, memory, nine + 6500)
+  assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'the same text for 6 s')
+})
+
+test('a run a person asked for still waits for a working agent, text in the input box and a dialog', async () => {
+  // Still for 30 s: enough for a run asked for by hand, were nothing else in the way.
+  const still = term({ lastOutputAt: nine - 30_000 })
+  const held = async (screen: string[], working = false) => {
+    const s = sched({ pendingSince: nine })
+    const memory = newMemory()
+    memory.asked.add('s1')
+    if (working) memory.agents.set('h1', 'working')
+    const f = fakeIo({ live: [still], screens: { h1: screen } })
+    await tick([s], f.io, memory, nine + 1000)
+    return { sent: f.sent, note: s.waitNote, soon: askedSoon([s], memory), asked: memory.asked.has('s1') }
+  }
+  assert.deepEqual(await held(idle, true), { sent: [], note: { code: 'busy' }, soon: false, asked: true }, 'its stop event brings the next look')
+  assert.deepEqual(await held(typing), { sent: [], note: { code: 'typing' }, soon: false, asked: true })
+  assert.deepEqual(await held(permission), { sent: [], note: { code: 'dialog' }, soon: false, asked: true })
+  assert.deepEqual((await held(idle)).sent, [['h1', 'Plan the day']], 'the same terminal with nothing in the way')
+})
+
+test('a run a person asked for with a new conversation: /clear, then the prompt 5 still seconds later', async () => {
+  const s = sched({ pendingSince: nine, clearFirst: true })
+  const memory = newMemory()
+  memory.asked.add('s1')
+  const f = fakeIo({ live: [term({ lastOutputAt: nine - 30_000 })] })
+  await tick([s], f.io, memory, nine + 1000)
+  assert.deepEqual(f.sent, [['h1', '/clear']])
+  assert.equal(askedSoon([s], memory), true, 'the screen settling after /clear is looked at within seconds')
+  // /clear printed.
+  f.state.live = [term({ lastOutputAt: nine + 1000 })]
+  await tick([s], f.io, memory, nine + 4000)
+  assert.equal(f.sent.length, 1, '3 s after /clear')
+  await tick([s], f.io, memory, nine + 7000)
+  assert.deepEqual(f.sent[1], ['h1', 'Plan the day'], '6 s after /clear')
 })
 
 test('waits for text left in the input box, a dialog, or a missing input box — then skips after 60 minutes', async () => {

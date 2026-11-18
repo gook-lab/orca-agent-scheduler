@@ -6,10 +6,12 @@ import { homedir } from 'node:os'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { type CliRunner, cliRunner, findCli, holdAgents, sendArgs, sentFrom, terminalsFrom } from './cli'
 import {
+  askedSoon,
   blankSchedule,
   blankTerminal,
   inspectOnEvent,
   type Io,
+  limits,
   locate,
   newMemory,
   nextAfter,
@@ -118,6 +120,8 @@ export function normalize(value: unknown): Schedule[] {
 const nameFromId = (id: string): string => id.split('::')[1]?.split('/').filter(Boolean).pop() ?? id
 
 let timer: ReturnType<typeof setInterval> | undefined
+/** The look taken within seconds at a run asked for by hand (limits.askedCheckMs). */
+let soon: ReturnType<typeof setTimeout> | undefined
 
 /** CLI runner — when empty, the running Orca app's CLI is found and used. Tests swap in a fake. */
 export const cli: { run: CliRunner | null } = { run: null }
@@ -255,6 +259,15 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       status.log = [...r.log.map((l) => `${new Date(now).toLocaleTimeString('en-GB')} ${l}`), ...status.log].slice(0, 50)
       for (const l of r.log) orca.log(l)
       notify(r.notices)
+      // A run a person asked for, held only by a moving screen: at the 30-second pace "now" took a minute
+      // and a half on a resting agent. Not once the plugin is off (no timer) — a check that was still
+      // running then would start the looks again.
+      if (timer && !soon && askedSoon(list, memory)) {
+        soon = setTimeout(() => {
+          soon = undefined
+          void runTick()
+        }, limits.askedCheckMs)
+      }
       // A write that fails here is tried again by the next check — what was sent stays known meanwhile.
       await persist()
     })
@@ -314,6 +327,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       for (const s of going) if (s.sentAt === null) orca.log(`${s.name}: ${s.lastStatus} (agent ${ev.state})`)
       notify([...seen.notices, ...r.notices])
       if (seen.changed || r.changed) await persist()
+      // A run asked for by hand may have waited on this agent — look now, not at the next check.
+      if (memory.asked.size > 0) void runTick()
     }).catch((error) => orca.log(`agent event failed: ${(error as Error).message}`))
   )
 
@@ -364,6 +379,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
           pendingSince: Date.now()
         }
         list = pruneOnce([...list, s])
+        memory.asked.add(s.id)
         // Lined up behind this edit, so it runs once the schedule is stored.
         void runTick()
         return s
@@ -438,6 +454,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       if (s.pendingSince === null && s.sentAt === null) s.pendingSince = Date.now()
       return s
     })
+    // A person asked and is looking at the terminal — the run need not sit out the full minute.
+    memory.asked.add(s.id)
     void runTick()
     return s
   })
@@ -500,6 +518,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   updateStatusBar()
   if (timer) clearInterval(timer)
+  if (soon) clearTimeout(soon)
+  soon = undefined
   timer = setInterval(() => void runTick(), TICK_MS)
   void runTick()
 }
@@ -507,6 +527,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 export function deactivate(): void {
   if (timer) clearInterval(timer)
   timer = undefined
+  if (soon) clearTimeout(soon)
+  soon = undefined
 }
 
 /** The first line of a prompt, short enough for a name. */

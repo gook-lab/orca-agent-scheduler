@@ -63,7 +63,7 @@ import {
 const schedules = atom<Schedule[]>([])
 /** The worker answered once; until then the list shows a placeholder, not "No schedules yet". */
 const schedulesLoaded = atom(false)
-/** The clock for "in 12m 08s", moved every second while the panel is in view. */
+/** The clock for "in 12m" on a card, moved every second while the panel is in view, so the minute turns on time. */
 const now = atom(Date.now())
 /** Agent terminals open in Orca; null until the first answer. Pushed by the worker when it changes. */
 const terminals = atom<TerminalOption[] | null>(null)
@@ -545,10 +545,6 @@ function pickTerminal(s: Schedule): void {
 
 // ───────────────────────── Top — title and actions, tabs, search ─────────────────────────
 
-/** The schedule that runs next, if any. */
-const nextOf = (list: Schedule[]): Schedule | undefined =>
-  list.filter((s) => !s.once && s.enabled && s.nextRunAt !== null).sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
-
 /** Title on the left, icon buttons on the right — the title row of Orca's own sidebars. */
 function Header() {
   const u = words(read(lang)).ui
@@ -611,32 +607,22 @@ function Nav() {
 /** How many are on and how many runs went out today, in words — drawn as pills all the time, the counts
  *  read as filters and did nothing when pressed. Badges are for what is out of the ordinary: waiting,
  *  running, need attention. */
+/** What is out of the ordinary, counted above the list — nothing while every schedule is at rest. The
+ *  rest is said where it belongs: the next run on each card and in Orca's status bar, on and off by the
+ *  switches. */
 function Stats() {
   const u = words(read(lang)).ui
   const list = read(schedules)
-  const recurring = list.filter((s) => !s.once)
-  const midnight = new Date()
-  midnight.setHours(0, 0, 0, 0)
-  const today = list.reduce((n, s) => n + s.history.filter((r) => r.at >= midnight.getTime()).length, 0)
   const waiting = list.filter((s) => s.pendingSince !== null).length
   const running = list.filter((s) => s.sentAt !== null).length
   const attention = list.filter(needsAttention).length
-  const on = recurring.filter((s) => s.enabled).length
-  // The tab counts the schedules; one-off sends alone leave nothing to say about "on".
-  const line = [recurring.length > 0 ? u.stats.on(on, recurring.length) : '', u.stats.today(today)].filter(Boolean).join(' · ')
+  if (waiting + running + attention === 0) return null
   return (
-    <Stack gap="xs">
-      <Text size="xs" muted>
-        {line}
-      </Text>
-      {waiting + running + attention > 0 ? (
-        <Row gap="xs" wrap>
-          {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
-          {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
-          {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
-        </Row>
-      ) : null}
-    </Stack>
+    <Row gap="xs" wrap>
+      {waiting > 0 ? <Badge>{u.stats.waiting(waiting)}</Badge> : null}
+      {running > 0 ? <Badge tone="accent">{u.stats.running(running)}</Badge> : null}
+      {attention > 0 ? <Badge tone="warning">{u.stats.attention(attention)}</Badge> : null}
+    </Row>
   )
 }
 
@@ -1159,10 +1145,9 @@ function TerminalBlock({ g }: { g: Group }) {
   )
 }
 
-/** What runs next and the counts, then one block per terminal. */
+/** The counts of what is out of the ordinary, then one block per terminal. */
 function SchedulesView() {
-  const l = read(lang)
-  const u = words(l).ui
+  const u = words(read(lang)).ui
   const list = read(schedules)
   const gone = read(undone)
   if (!read(schedulesLoaded)) return <Skeleton shape="text" lines={3} label={u.loading} />
@@ -1187,26 +1172,9 @@ function SchedulesView() {
   const rank = (g: Group) => (favs.includes(paneOf(g.live ?? g.ref)) ? 0 : 1)
   all.sort((a, b) => rank(a) - rank(b))
   const groups = all.flatMap((g) => filterGroup(g, q) ?? (gone && holds(g, gone) ? [{ ...g, recurring: [], once: [] }] : []))
-  const next = nextOf(list)
   return (
     <Stack gap="md">
-      <Stack gap="xs">
-        <Box direction="row" align="center" gap="xs">
-          <Box grow shrink minWidth={0}>
-            <Text size="xs" muted truncate>
-              {next?.nextRunAt ? u.nextUp(whenText(l, next.nextRunAt), next.name) : u.noneUp}
-            </Text>
-          </Box>
-          {next?.nextRunAt ? (
-            <Box shrink={false}>
-              <Text size="xs" tone="accent">
-                {u.until(next.nextRunAt - read(now))}
-              </Text>
-            </Box>
-          ) : null}
-        </Box>
-        <Stats />
-      </Stack>
+      <Stats />
       {groups.length === 0 ? <NoMatch /> : null}
       {groups.map((g) => (
         <TerminalBlock g={g} />

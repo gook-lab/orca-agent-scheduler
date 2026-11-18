@@ -215,8 +215,9 @@ test("language — Orca's by default, or the one picked in Settings; stored for 
   await again.unmount()
 })
 
-test('on top: how many are on and ran today, in words; badges only for waiting, running, need attention', async () => {
+test('above the list: badges for waiting, running and need attention — nothing while every schedule is at rest', async () => {
   const view = await mount(panel, { host: host() })
+  type Node = { type?: string; children?: unknown[] }
   const morning: Schedule = {
     ...blankSchedule('s1'),
     name: 'Morning report',
@@ -236,19 +237,27 @@ test('on top: how many are on and ran today, in words; badges only for waiting, 
     waitNote: { code: 'typing' }
   }
   const off: Schedule = { ...blankSchedule('s3'), name: 'Paused', terminal: { ...open[1] }, enabled: false }
-  await view.post('schedules.changed', { schedules: [morning, stuck, off] })
-  // Words, not pills: drawn as badges all the time, the counts read as filters and did nothing when pressed.
-  assert.ok(view.find({ type: 'Text', text: '2 of 3 on · 1 run today' }))
   const badges = (): string[] => view.findAll({ type: 'Badge' }).map((e) => e.text)
-  assert.equal(badges().some((x) => / on$|runs? today$|schedules?$/.test(x)), false, 'the tab already counts the schedules')
-  for (const text of ['1 waiting', '1 need attention']) assert.ok(badges().includes(text), text)
-  assert.equal(words('ko').ui.stats.on(4, 4), '켜짐 4/4')
+  // What the Schedules tab draws under the search box: the badges if any, then one block per terminal.
+  const under = (): string[] => (((view.tree() as Node).children?.[2] as Node).children ?? []).map((c) => (c as Node).type ?? '')
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+
   await view.post('schedules.changed', { schedules: [morning, off] })
-  assert.ok(view.find({ type: 'Text', text: '1 of 2 on · 1 run today' }))
-  assert.equal(badges().some((x) => /waiting$|running$|need attention$/.test(x)), false, 'nothing out of the ordinary — no badges')
+  assert.deepEqual(under(), ['Stack', 'Stack'], 'at rest: the list starts right under the search box')
+  assert.deepEqual(badges(), [], 'nothing out of the ordinary — no badges')
+  // What runs next is on its card and in the status bar; on and off, on the switches.
+  assert.equal(texts().some((x) => /Morning report|^Next /.test(x)), false, 'no line above the list repeats the next run — the name is on its switch')
+  assert.equal(texts().some((x) => / on$| on · |runs? today|upcoming/i.test(x)), false, 'nor counts what the switches show')
+
   await view.post('schedules.changed', { schedules: [morning, stuck, off] })
+  assert.deepEqual(under(), ['Row', 'Stack', 'Stack'], 'something is going on: its badges come first')
+  assert.deepEqual(badges(), ['1 waiting', '1 need attention'])
   assert.equal(view.findAll({ type: 'Callout' }).filter((c) => c.props.title === 'Check').length, 1, 'orange only for the one counted')
-  assert.ok(view.find({ text: 'Next today 23:59 · Morning report' }))
+
+  await view.post('schedules.changed', { schedules: [{ ...morning, sentAt: Date.now() }, off] })
+  assert.deepEqual(badges(), ['1 running'])
+  await view.post('schedules.changed', { schedules: [morning, off] })
+  assert.deepEqual(under(), ['Stack', 'Stack'], 'over: the badges go, and their line with them')
   await view.unmount()
 })
 
@@ -486,7 +495,6 @@ test('sent records sit folded under their terminal', async () => {
   }
   await view.post('schedules.changed', { schedules: [done] })
   assert.ok(titled(view, 'Collapsible', 'Sent 1 · last today 12:03'))
-  assert.ok(view.find({ type: 'Text', text: '1 run today' }), 'a one-off send is a run, not a schedule — nothing to say about "on"')
   await view.unmount()
 })
 
@@ -913,13 +921,6 @@ test('the empty list is one line and a button; how sending works is in Settings,
   await view.unmount()
 })
 
-test('time left — seconds under an hour, minutes under a day, in both languages', () => {
-  const en = words('en').ui.until
-  const ko = words('ko').ui.until
-  assert.deepEqual([en(500), en(728_000), en(3_725_000), en(90_000_000)], ['now', 'in 12m 08s', 'in 1h 02m', 'in 1d 1h'])
-  assert.deepEqual([ko(500), ko(728_000), ko(3_725_000), ko(90_000_000)], ['곧', '12분 08초 뒤', '1시간 02분 뒤', '1일 1시간 뒤'])
-})
-
 test('time left on a card — to the minute, so a card does not tick by the second', () => {
   const en = words('en').ui.inAbout
   const ko = words('ko').ui.inAbout
@@ -927,21 +928,26 @@ test('time left on a card — to the minute, so a card does not tick by the seco
   assert.deepEqual([ko(59_000), ko(728_000), ko(3_725_000), ko(90_000_000)], ['곧', '12분 뒤', '1시간 02분 뒤', '1일 1시간 뒤'])
 })
 
-test('the next run counts down every second while the panel is in view, and rests while hidden', async () => {
+test('the time left on a card moves while the panel is in view, and rests while hidden', async () => {
   const view = await mount(panel, { host: host() })
-  const s: Schedule = { ...blankSchedule('a'), name: 'Morning report', terminal: { ...open[0] }, enabled: true, nextRunAt: Date.now() + 728_500 }
-  await view.post('schedules.changed', { schedules: [s] })
-  const left = () => view.find({ text: /^in 12m \d\ds$/ })?.text ?? null
-  const first = left()
-  assert.ok(first, 'beside what runs next')
-  await new Promise((r) => setTimeout(r, 1600))
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  // 60.3 s away is "in 1m"; one tick of the clock later it is under a minute — "now".
+  const soon = (): Schedule => ({ ...blankSchedule('a'), name: 'Morning report', terminal: { ...open[0] }, enabled: true, nextRunAt: Date.now() + 60_300 })
+  const left = (): string | null =>
+    view.findAll({ type: 'Text' }).map((e) => plain(e.text)).find((x) => x.startsWith('next '))?.split(' · ').pop() ?? null
+  await wait(1100)
   await view.settled()
-  assert.notEqual(left(), first, 'a second later it moved')
+  await view.post('schedules.changed', { schedules: [soon()] })
+  assert.equal(left(), 'in 1m')
+  await wait(1600)
+  await view.settled()
+  assert.equal(left(), 'now', 'a second later the minute turned')
   await view.setVisible(false)
-  const hidden = left()
-  await new Promise((r) => setTimeout(r, 1600))
+  await view.post('schedules.changed', { schedules: [soon()] })
+  assert.equal(left(), 'in 1m')
+  await wait(1600)
   await view.settled()
-  assert.equal(left(), hidden, 'not redrawn while nobody sees it')
+  assert.equal(left(), 'in 1m', 'not redrawn while nobody sees it')
   await view.unmount()
 })
 

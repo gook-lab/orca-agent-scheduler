@@ -241,22 +241,11 @@ const en = {
     undo: 'Undo',
     waitingToSend: 'Waiting to send',
     stats: {
-      on: (on: number, all: number) => `${on} of ${all} on`,
       waiting: (n: number) => `${n} waiting`,
       running: (n: number) => `${n} running`,
-      attention: (n: number) => `${n} need attention`,
-      today: (n: number) => (n === 1 ? '1 run today' : `${n} runs today`)
+      attention: (n: number) => `${n} need attention`
     },
-    nextUp: (when: string, name: string) => `Next ${when} · ${name}`,
-    noneUp: 'No upcoming runs',
-    until: (ms: number) => {
-      const [d, h, m, sec] = parts(ms)
-      if (ms < 1000) return 'now'
-      if (d > 0) return `in ${d}d ${h}h`
-      if (h > 0) return `in ${h}h ${pad2(m)}m`
-      return `in ${m}m ${pad2(sec)}s`
-    },
-    /** `until` to the minute — a card does not tick by the second. */
+    /** The time left, to the minute — a card does not tick by the second. */
     inAbout: (ms: number) => {
       const [d, h, m] = parts(ms)
       if (ms < 60_000) return 'now'
@@ -487,20 +476,9 @@ const ko: Words = {
     undo: '되돌리기',
     waitingToSend: '보내기 대기',
     stats: {
-      on: (on, all) => `켜짐 ${on}/${all}`,
       waiting: (n) => `대기 ${n}`,
       running: (n) => `실행 중 ${n}`,
-      attention: (n) => `확인 필요 ${n}`,
-      today: (n) => `오늘 실행 ${n}`
-    },
-    nextUp: (when, name) => `다음 ${when} · ${name}`,
-    noneUp: '다가오는 실행 없음',
-    until: (ms) => {
-      const [d, h, m, sec] = parts(ms)
-      if (ms < 1000) return '곧'
-      if (d > 0) return `${d}일 ${h}시간 뒤`
-      if (h > 0) return `${h}시간 ${pad2(m)}분 뒤`
-      return `${m}분 ${pad2(sec)}초 뒤`
+      attention: (n) => `확인 필요 ${n}`
     },
     inAbout: (ms) => {
       const [d, h, m] = parts(ms)

@@ -2,6 +2,16 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.5 — 2026-11-18
+
+Nothing above the list that the list already says.
+
+- **The two lines above the schedules are gone.** `Next today 12:03 · <name>` with its countdown repeated what every card says under its name and what Orca's status bar shows whether the panel is open or not; `4 of 4 on` repeated the switches; `2 runs today` was a number nobody could act on. The list starts 48 px higher when every schedule is at rest — right under the search box, as on the Terminals tab — and 40 px higher while something is going on.
+- **The badges stay, and only they.** `waiting`, `running` and `need attention` are counted above the list when there is one to count, so a folded block still says that a schedule in it needs a person.
+- No longer in the panel: one line naming the next run among many — cards stand in the order they were made, so with many schedules that is the status bar's to say — and how many runs went out today.
+
+Drawn on the real panel at 280 and 380 px before it was built, beside a version that kept the next-run line. The pictures in the README are still those of 0.12.1.
+
 ## 0.12.4 — 2026-11-18
 
 A folded card says one thing about its runs at a time.

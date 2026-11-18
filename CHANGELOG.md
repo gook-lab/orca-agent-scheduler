@@ -2,6 +2,15 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.8 — 2026-11-18
+
+Send now on a terminal whose agent stopped without saying so.
+
+- **A press no longer sits behind `Agent is working` on a resting terminal.** Orca's report that an agent is working is believed until its end is reported — and when that end never comes, until the screen has been still for 3 minutes. On one terminal the end did not come: Send now, pressed while the agent rested at an empty input box, went out four minutes later. For a run a person asks for, a working report now counts only while the screen keeps changing: 5 seconds still and the turn is taken as over — the same limit as for the screen itself.
+- **Why 5 seconds tells the two apart.** An agent in a turn changes its screen the whole time. Measured on Claude Code, while it wrote an answer and while it ran a 25-second command that printed nothing, no two changes were more than 2 seconds apart — the elapsed-time lines tick. Pressed during that command, the run waited as `Agent is working` and went out 7 s after the turn ended. An agent that ended its turn with a shell still running in the background is at its prompt, and gets the run.
+- **Quick looks cover every wait that passes by itself, for two minutes.** A run asked for by hand is looked at again every 3 seconds while it waits on a working agent or on another schedule's run as well, not only on a moving screen — for the first two minutes after the press, then at the usual 30-second pace, since each look reads the terminal list through the CLI (0.2 s of CPU). The extra look that an agent's status event brought in 0.12.6 is gone; the quick looks do its work.
+- A scheduled run is as before: a minute of still screen, and 3 minutes for a working report whose end did not come.
+
 ## 0.12.7 — 2026-11-18
 
 One button fewer on every terminal line.

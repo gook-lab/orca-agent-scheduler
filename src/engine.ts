@@ -4,7 +4,7 @@
 // "terminal is outside the active worktree"). Screen reads, sends and the live terminal list come
 // in through Io so tests can swap them.
 import { nextRun, parseCron } from './cron'
-import { type Lang, type Note, type NoteCode, type Status, words } from './i18n'
+import { attentionCodes, type Lang, type Note, type NoteCode, type Status, words } from './i18n'
 import { readReport, type Report, reportToken } from './report'
 import { agentKind, permissionPrompt, promptState } from './screen'
 
@@ -108,10 +108,14 @@ export const limits = {
   quietMs: 60_000,
   /** The same for a run a person asked for just now: they are looking at the terminal, and behind a full
    *  minute a press reads as nothing happening (a resting agent that had just printed — 92 and 151 s,
-   *  2026-11-18). The other checks stay: a working agent, text in the input box, a dialog. */
+   *  2026-11-18). A "working" report is believed for as long only, too — see the check. Text in the
+   *  input box and a dialog hold the run as ever. */
   askedQuietMs: 5_000,
-  /** While only a moving screen holds such a run it is looked at again this soon, not at the next check. */
+  /** While such a run waits for something that passes by itself it is looked at again this soon … */
   askedCheckMs: 3_000,
+  /** … for this long after it was asked for, then at the usual pace: each look reads the terminal list
+   *  through the CLI — 0.2 s of CPU, twice a look (measured 2026-11-18). */
+  askedFastMs: 2 * 60_000,
   /** Quiet this long after sending — an empty input box means done, anything else means stuck. */
   finishedQuietMs: 3 * 60_000,
   /** A run that ended without its result line is still looked at for this long: an agent that ended its
@@ -376,12 +380,16 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       return
     }
     const quiet = quietFor(t.handle, t)
+    const asked = memory.asked.has(s.id)
     // A stale "working" (a missed done event) stops counting once the screen has been still for a while.
-    if (memory.agents.get(t.handle) === 'working' && quiet < limits.finishedQuietMs) {
+    // For a run a person asked for that is 5 seconds, as for the screen itself: a working agent prints the
+    // whole time, and a terminal whose done events did not come kept a press behind "Agent is working"
+    // for four minutes while it rested (2026-11-18).
+    if (memory.agents.get(t.handle) === 'working' && quiet < (asked ? limits.askedQuietMs : limits.finishedQuietMs)) {
       waitOrGiveUp('busy')
       return
     }
-    if (quiet < (memory.asked.has(s.id) ? limits.askedQuietMs : limits.quietMs)) {
+    if (quiet < (asked ? limits.askedQuietMs : limits.quietMs)) {
       waitOrGiveUp('moving')
       return
     }
@@ -450,9 +458,17 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
   return { log, notices }
 }
 
-/** A run asked for by hand that only a moving screen holds — worth another look within seconds. */
-export const askedSoon = (list: Schedule[], memory: Memory): boolean =>
-  list.some((s) => memory.asked.has(s.id) && s.pendingSince !== null && s.sentAt === null && (s.waitNote?.code === 'moving' || s.waitNote?.code === 'cleared'))
+/** A run asked for by hand, not long ago, that waits for something that passes by itself — worth another
+ *  look within seconds. Not while it waits for a person (a dialog, text in the input box, no terminal). */
+export const askedSoon = (list: Schedule[], memory: Memory, now: number): boolean =>
+  list.some(
+    (s) =>
+      memory.asked.has(s.id) &&
+      s.pendingSince !== null &&
+      s.sentAt === null &&
+      now - s.pendingSince < limits.askedFastMs &&
+      !(s.waitNote && attentionCodes.includes(s.waitNote.code))
+  )
 
 async function watch(
   s: Schedule,

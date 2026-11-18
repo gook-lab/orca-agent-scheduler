@@ -142,11 +142,11 @@ test('a run a person asked for goes out after 5 still seconds — the same scree
   await tick([asked], f.io, memory, nine + 1000)
   assert.deepEqual(f.sent, [], 'printed 3 s ago')
   assert.deepEqual(asked.waitNote, { code: 'moving' })
-  assert.equal(askedSoon([asked], memory), true, 'worth another look within seconds')
+  assert.equal(askedSoon([asked], memory, nine + 1000), true, 'worth another look within seconds')
   await tick([asked], f.io, memory, nine + 4000)
   assert.deepEqual(f.sent, [['h1', 'Plan the day']], 'printed 6 s ago')
   assert.equal(memory.asked.has('s1'), false, 'asked for by hand only until it goes out')
-  assert.equal(askedSoon([asked], memory), false)
+  assert.equal(askedSoon([asked], memory, nine + 4000), false)
 
   const due = sched({ pendingSince: nine })
   const g = fakeIo({ live: [term({ lastOutputAt: printed })] })
@@ -154,7 +154,7 @@ test('a run a person asked for goes out after 5 still seconds — the same scree
   await tick([due], g.io, own, nine + 4000)
   assert.deepEqual(g.sent, [], 'the schedule\'s own time: 6 s is not a minute')
   assert.deepEqual(due.waitNote, { code: 'moving' })
-  assert.equal(askedSoon([due], own), false, 'a scheduled run keeps the 30-second pace')
+  assert.equal(askedSoon([due], own, nine + 4000), false, 'a scheduled run keeps the 30-second pace')
 })
 
 test('a run a person asked for: text unchanged for 5 seconds is enough while the status line repaints', async () => {
@@ -172,21 +172,47 @@ test('a run a person asked for: text unchanged for 5 seconds is enough while the
 })
 
 test('a run a person asked for still waits for a working agent, text in the input box and a dialog', async () => {
-  // Still for 30 s: enough for a run asked for by hand, were nothing else in the way.
-  const still = term({ lastOutputAt: nine - 30_000 })
-  const held = async (screen: string[], working = false) => {
+  const held = async (screen: string[], over: { working?: boolean; printedAgo?: number } = {}) => {
     const s = sched({ pendingSince: nine })
     const memory = newMemory()
     memory.asked.add('s1')
-    if (working) memory.agents.set('h1', 'working')
-    const f = fakeIo({ live: [still], screens: { h1: screen } })
+    if (over.working) memory.agents.set('h1', 'working')
+    // Still for 30 s unless said: enough for a run asked for by hand, were nothing else in the way.
+    const f = fakeIo({ live: [term({ lastOutputAt: nine + 1000 - (over.printedAgo ?? 30_000) })], screens: { h1: screen } })
     await tick([s], f.io, memory, nine + 1000)
-    return { sent: f.sent, note: s.waitNote, soon: askedSoon([s], memory), asked: memory.asked.has('s1') }
+    return { sent: f.sent, note: s.waitNote, soon: askedSoon([s], memory, nine + 1000), asked: memory.asked.has('s1') }
   }
-  assert.deepEqual(await held(idle, true), { sent: [], note: { code: 'busy' }, soon: false, asked: true }, 'its stop event brings the next look')
-  assert.deepEqual(await held(typing), { sent: [], note: { code: 'typing' }, soon: false, asked: true })
+  assert.deepEqual(await held(idle, { working: true, printedAgo: 2000 }), { sent: [], note: { code: 'busy' }, soon: true, asked: true }, 'printing — looked at again within seconds')
+  assert.deepEqual(await held(typing), { sent: [], note: { code: 'typing' }, soon: false, asked: true }, 'a person has to clear it — the usual pace')
   assert.deepEqual(await held(permission), { sent: [], note: { code: 'dialog' }, soon: false, asked: true })
   assert.deepEqual((await held(idle)).sent, [['h1', 'Plan the day']], 'the same terminal with nothing in the way')
+})
+
+test('a "working" nobody took back: a run a person asked for goes after 5 still seconds — a scheduled run gives it 3 minutes', async () => {
+  // The agent stopped, the done event did not come, and the screen has been still for 30 s.
+  const run = async (asked: boolean) => {
+    const s = sched({ pendingSince: nine })
+    const memory = newMemory()
+    if (asked) memory.asked.add('s1')
+    memory.agents.set('h1', 'working')
+    const f = fakeIo({ live: [term({ lastOutputAt: nine - 29_000 })] })
+    await tick([s], f.io, memory, nine + 1000)
+    return { sent: f.sent.length, note: s.waitNote }
+  }
+  assert.deepEqual(await run(true), { sent: 1, note: null })
+  assert.deepEqual(await run(false), { sent: 0, note: { code: 'busy' } })
+})
+
+test('quick looks at a run a person asked for: while it waits for what passes by itself, for two minutes', () => {
+  const memory = newMemory()
+  memory.asked.add('s1')
+  const waiting = (code: 'moving' | 'busy' | 'otherRun' | 'missing' | 'noAgent' | 'cli' | 'noPrompt'): Schedule => ({ ...sched({ pendingSince: nine }), waitNote: { code } })
+  const soon = (s: Schedule, after = 1000) => askedSoon([s], memory, nine + after)
+  assert.deepEqual([soon(waiting('moving')), soon(waiting('busy')), soon(waiting('otherRun'))], [true, true, true])
+  assert.deepEqual([soon(waiting('missing')), soon(waiting('noAgent')), soon(waiting('cli')), soon(waiting('noPrompt'))], [false, false, false, false], 'a person has to act')
+  assert.equal(soon(waiting('busy'), limits.askedFastMs - 1), true)
+  assert.equal(soon(waiting('busy'), limits.askedFastMs), false, 'then the usual 30-second pace — each look costs a CLI call')
+  assert.equal(soon({ ...waiting('moving'), sentAt: nine }), false, 'its own run is going')
 })
 
 test('a run a person asked for with a new conversation: /clear, then the prompt 5 still seconds later', async () => {
@@ -196,7 +222,7 @@ test('a run a person asked for with a new conversation: /clear, then the prompt 
   const f = fakeIo({ live: [term({ lastOutputAt: nine - 30_000 })] })
   await tick([s], f.io, memory, nine + 1000)
   assert.deepEqual(f.sent, [['h1', '/clear']])
-  assert.equal(askedSoon([s], memory), true, 'the screen settling after /clear is looked at within seconds')
+  assert.equal(askedSoon([s], memory, nine + 1000), true, 'the screen settling after /clear is looked at within seconds')
   // /clear printed.
   f.state.live = [term({ lastOutputAt: nine + 1000 })]
   await tick([s], f.io, memory, nine + 4000)

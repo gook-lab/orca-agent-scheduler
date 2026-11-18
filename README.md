@@ -36,14 +36,14 @@ At the set time the run becomes due and is checked every 30 seconds. The prompt 
 | Check | Why |
 |---|---|
 | The terminal has shown nothing new for a minute (5 seconds for Send now and Send once — below) | The agent or a person may still be working. Nothing new is no output, or the same text as at an earlier check: an idle agent repaints its status line, so the time of its last output alone keeps moving (an idle Claude Code, 2026-11-17 — 7 times in 4 minutes, the text the same throughout) |
-| Orca does not report the agent as working | A working report older than 3 minutes is ignored, in case its end was missed |
+| Orca does not report the agent as working | In case its end was missed, a working report stops counting once the screen has been still for 3 minutes (5 seconds for Send now and Send once) |
 | The input box is visible and empty | A permission or question dialog is open, or a person is typing |
 | No other schedule sent to this terminal in the same check | Two prompts would land in one turn |
 | No other schedule's run is still going in this terminal | Its end would be read off this run's reply. A run that went silent is closed within 3 minutes, so the wait is short |
 
 A run that waits more than 60 minutes is skipped, with the reason it was waiting.
 
-**Send now** (▷ on a card) and **Send once** are asked for by a person who is looking at the terminal. For them the first check is 5 seconds, not a minute, and while only that holds the run it is looked at again every 3 seconds — and at once when an agent reports a stop. The other checks are the same. On a resting terminal the prompt goes out within seconds; behind a working agent, seconds after it stops (Claude Code, 2026-11-18: 5.5 s on a terminal opened a moment ago, 7 s after the end of a turn — a minute and a half and more before).
+**Send now** (▷ on a card) and **Send once** are asked for by a person who is looking at the terminal. For them the screen has to be still for 5 seconds, not a minute, and a working report from Orca is believed only that long as well: an agent in a turn changes its screen every second or two (its elapsed-time lines tick), while a report whose end never came would keep the run waiting for 3 minutes on a resting terminal. For the first two minutes the run is looked at again every 3 seconds while it waits for something that passes by itself. Text in the input box and a dialog hold it as ever. On a resting terminal the prompt goes out within seconds; behind a working agent, seconds after it stops (Claude Code, 2026-11-18: 5.5 s on a terminal opened a moment ago; 7 s after the end of a turn, both one that wrote an answer and one that ran a 25-second command printing nothing).
 
 What goes wrong on the way is kept to the one run it belongs to:
 

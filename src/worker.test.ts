@@ -179,7 +179,7 @@ const printedAt = (at: number): CliResult => ({
   result: { terminals: [{ handle: 'h1', title: 'Morning', agentIdentity: 'claude', worktreeId: 'w1', tabId: 't1', leafId: 'l1', lastOutputAt: at, writable: true }] }
 })
 const later = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const status = (state: 'working' | 'done') => ({ workspaceId: null, paneKey: 'p', terminalId: 'h1', state, receivedAt: Date.now() })
+const status = (state: 'working') => ({ workspaceId: null, paneKey: 'p', terminalId: 'h1', state, receivedAt: Date.now() })
 
 test('send now on a resting terminal that just printed — looked at again within seconds, not at the next 30-second check', () =>
   quickAsked(async () => {
@@ -217,7 +217,7 @@ test('a scheduled run held by the same screen keeps the 30-second pace and the f
     await worker.deactivate()
   }))
 
-test('send now behind a working agent goes out when the agent stops — its stop brings the next look', () =>
+test('send now on a terminal Orca still calls working after its turn ended — goes out once the screen is still, without a stop event', () =>
   quickAsked(async () => {
     const calls = fakeCli({ list: printedAt(Date.now()) })
     const h = host()
@@ -225,12 +225,11 @@ test('send now behind a working agent goes out when the agent stops — its stop
     const s = (await worker.request('schedules.save', draft)) as Schedule
     await worker.emit('agent.status.changed', status('working'))
     await worker.request('schedules.runNow', { id: s.id })
-    await later(700)
-    assert.deepEqual(sentText(calls), [], 'still for longer than the shortened limit, but the agent is working')
+    await settle()
+    assert.deepEqual(sentText(calls), [], 'printed a moment ago, and reported working')
     assert.deepEqual((h.data().storage.schedules as Schedule[])[0].waitNote, { code: 'busy' })
-    await worker.emit('agent.status.changed', status('done'))
-    await later(200)
-    assert.deepEqual(sentText(calls), ['Plan the day'])
+    await later(700)
+    assert.deepEqual(sentText(calls), ['Plan the day'], 'still for the shortened limit — the report is not believed past that')
     await worker.deactivate()
   }))
 

@@ -443,14 +443,26 @@ test('folding a block leaves a one-line summary', async () => {
   await view.unmount()
 })
 
-test('↗ shows the terminal in Orca; pressing a block name only folds it', async () => {
+test('a block reads as one terminal — its title first, its workspace after; the chevron folds it, ↗ shows it in Orca', async () => {
   const focused: string[] = []
   const view = await mount(panel, { host: host({ focused }) })
   const s: Schedule = { ...blankSchedule('s1'), name: 'Morning report', terminal: { ...open[0] } }
-  await view.post('schedules.changed', { schedules: [s] })
-  await view.press({ type: 'Button', text: 'acme_notes' })
+  // A closed terminal that never had a title: its workspace stands in, once.
+  const bare: Schedule = { ...blankSchedule('s2'), name: 'Sweep', terminal: { ...open[1], handle: 'gone', leafId: 'gone', title: '', workspace: 'solo' } }
+  await view.post('schedules.changed', { schedules: [s, bare] })
+  const texts = view.findAll({ type: 'Text' })
+  const title = texts.findIndex((e) => e.text === 'Morning')
+  const where = texts.findIndex((e) => e.text === 'acme_notes')
+  assert.ok(title >= 0 && where > title, 'the title leads — with the workspace first a block read as a project')
+  assert.equal(texts[title].props.weight, 'medium')
+  assert.equal(texts[title].props.truncate, true, 'a long title ends in … — a Button ran over the buttons beside it')
+  assert.equal(texts[where].props.muted, true)
+  assert.equal(view.findAll({ type: 'Button' }).filter((e) => e.text === 'Morning' || e.text === 'acme_notes').length, 0)
+  const solo = view.findAll({ type: 'Text', text: 'solo' })
+  assert.deepEqual(solo.map((e) => e.props.weight), ['medium'], 'no title: the workspace in its place, not twice')
+  await view.press(view.findAll({ label: 'Collapse' })[0])
   assert.equal(view.find({ label: 'Morning report' }), null, 'folded')
-  await view.press({ type: 'Button', text: 'acme_notes' })
+  await view.press({ label: 'Expand' })
   assert.ok(view.find({ label: 'Morning report' }), 'open again')
   assert.deepEqual(focused, [], 'Orca was not moved')
   await view.select({ type: 'Tabs' }, 'terminals')
@@ -540,7 +552,7 @@ test('duplicate opens a copy; delete offers Undo', async () => {
   await view.post('schedules.changed', { schedules: [] })
   assert.equal(view.find({ label: 'No schedules yet' }), null, 'the block stays while Undo is offered')
   assert.ok(view.find({ text: 'Deleted “Release”' }), 'Undo where the schedule was, under its terminal')
-  assert.ok(view.find({ type: 'Button', text: 'acme_notes' }))
+  assert.ok(view.find({ type: 'Text', text: 'Morning' }), 'its terminal line still on top')
   await view.press({ text: 'Undo' })
   assert.equal(restored[0].id, 's1')
   assert.equal(view.find({ text: 'Deleted “Release”' }), null)

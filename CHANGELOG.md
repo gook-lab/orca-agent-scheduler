@@ -2,6 +2,14 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.9 — 2026-11-18
+
+A block reads as what it is: one terminal.
+
+- **The terminal's title leads its line; the workspace follows in grey.** The line used to start with the workspace in bold and the title after it in grey. A block is one terminal with its schedules, but read that way it looked like a project — and Send once on it like a button that sends to every terminal in that project. It sends to that one terminal, and nothing in the plugin sends to several at once. The order is now that of the form's terminal list: title, then workspace. A terminal with no title shows its workspace alone.
+- **A long title ends in … instead of running over the buttons.** The name on the line was a button — pressing it folded the block — and a button does not shorten its text: with a title in that place, a long one ran over the marks on its left and the buttons on its right. The title is now text. Of the room left for words it takes up to two thirds and the workspace the rest (checked at 280, 380 and 520 px). Folding is the chevron at the start of the line, as before; pressing the name no longer folds.
+- **Send once on a terminal line says where it goes.** Its tooltip was `Send a prompt to this terminal once, as soon as it is idle`; it is now `Send one prompt to this terminal only, once — apart from its schedules`.
+
 ## 0.12.8 — 2026-11-18
 
 Send now on a terminal whose agent stopped without saying so.

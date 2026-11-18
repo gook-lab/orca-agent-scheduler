@@ -1,6 +1,6 @@
 // Schedules panel — laid out like Orca's own sidebars: a title with icon buttons, tabs, a search box,
 // then the list. Schedules shows what runs next, counts and one block per agent terminal; Terminals
-// lists every open agent terminal. Pressing a terminal's name brings Orca to it. The form (new · edit ·
+// lists every open agent terminal. ↗ on a terminal's line brings Orca to it. The form (new · edit ·
 // send once) and Settings replace the list while open.
 import {
   atom,
@@ -615,10 +615,11 @@ const agentIcon: Record<AgentKind, IconName> = { claude: 'bot', codex: 'terminal
 /** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles. */
 const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 
-/** One terminal: agent mark, a green dot while it is open, workspace and title. In a block, pressing the
- *  name folds it, as rows do in Orca's own trees; ↗ brings Orca to the terminal. On the Terminals tab a
- *  terminal with schedules shows how many, and pressing that goes to them. Then send once and new
- *  schedule. A closed terminal stays, faded, with its last known agent. */
+/** One terminal: agent mark, a green dot while it is open, its title, then its workspace, muted — the
+ *  order of the picker. A block is one terminal, and with the workspace first it read as a project whose
+ *  buttons act on every terminal in it. In a block the chevron folds it; ↗ brings Orca to the terminal.
+ *  On the Terminals tab a terminal with schedules shows how many, and pressing that goes to them. Then
+ *  send once and new schedule. A closed terminal stays, faded, with its last known agent. */
 function TerminalLine({
   term: t,
   live,
@@ -632,9 +633,11 @@ function TerminalLine({
 }) {
   const u = words(read(lang)).ui
   const kind = agentKind(live?.agent ?? t.agent)
-  const name = t.workspace || t.title
-  // Marks, dot and name keep their width (squeezed, text broke a letter per line); the title takes what is
-  // left and ends in …; the name stops at half the line.
+  const name = t.title || t.workspace
+  const where = t.title ? t.workspace : ''
+  // Marks, dot and buttons keep their width. Of the room left for words the title takes up to two thirds
+  // and the workspace the rest; each ends in …. The title is text, not a button: a Button does not shorten
+  // its text, and a long title ran over the marks and the buttons on both sides.
   return (
     <Box direction="row" align="center" gap="xs">
       {fold ? (
@@ -651,21 +654,17 @@ function TerminalLine({
           ●
         </Text>
       </Box>
-      <Box shrink={false} maxWidth="50%">
-        {fold ? (
-          <Button size="xs" variant="ghost" tooltip={fold.open ? u.collapse : u.expand} onPress={fold.toggle}>
-            {name}
-          </Button>
-        ) : (
+      <Box direction="row" align="center" gap="xs" grow shrink minWidth={0}>
+        <Box shrink={false} minWidth={0} maxWidth="66%">
           <Text size="xs" weight="medium" truncate>
             {name}
           </Text>
-        )}
-      </Box>
-      <Box grow shrink minWidth={0}>
-        <Text size="xs" muted truncate>
-          {t.workspace ? t.title : ''}
-        </Text>
+        </Box>
+        <Box grow shrink minWidth={0}>
+          <Text size="xs" muted truncate>
+            {where}
+          </Text>
+        </Box>
       </Box>
       {count ? (
         <Box shrink={false}>

@@ -479,11 +479,19 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
     ? 'success'
     : status === 'failed' || status === 'noResult'
       ? 'danger'
-      : status === 'skipped' || status === 'aborted' || status === 'doneWaiting'
+      : status === 'aborted' || status === 'doneWaiting'
         ? 'warning'
         : status === 'sent'
           ? 'accent'
           : 'neutral'
+
+/** A run that never went out: its terminal was not free for an hour and the plugin gave it up. `Skipped`
+ *  in an agent's result line is the agent's answer — there was nothing to do — and an ordinary result. */
+const missed = (r: Pick<RunRecord, 'status' | 'note'>): boolean => r.status === 'skipped' && r.note?.code === 'waitedOut'
+
+/** A record's colour. Orange is for a run a person may want to look at — of the skipped ones, the missed
+ *  run only: two of four cards stood orange after an ordinary morning (2026-11-18). */
+const recordTone = (r: Pick<RunRecord, 'status' | 'note'>): ReturnType<typeof statusTone> => (missed(r) ? 'warning' : statusTone(r.status))
 
 /** The round mark at a card's left — what a glance takes in first. What is going on now comes before how
  *  the last run went, and a schedule that is off says only that: an empty circle. */
@@ -497,9 +505,19 @@ const markOf = (
   if (!s.enabled) return { tone: 'neutral', glyph: '' }
   const last = s.history[0]
   if (!last) return { tone: 'neutral', glyph: '•' }
-  const tone = statusTone(last.status)
+  const tone = recordTone(last)
   const glyph =
-    tone === 'success' ? '✓' : tone === 'danger' ? '✕' : last.status === 'doneWaiting' ? '?' : tone === 'warning' ? '–' : tone === 'accent' ? '▸' : '•'
+    tone === 'success'
+      ? '✓'
+      : tone === 'danger'
+        ? '✕'
+        : last.status === 'doneWaiting'
+          ? '?'
+          : tone === 'warning' || last.status === 'skipped'
+            ? '–'
+            : tone === 'accent'
+              ? '▸'
+              : '•'
   return { tone, glyph }
 }
 
@@ -615,6 +633,9 @@ const agentIcon: Record<AgentKind, IconName> = { claude: 'bot', codex: 'terminal
 /** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles. */
 const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 
+/** About how wide a text is drawn, in Latin letters: Hangul, kana and CJK take about two. */
+export const drawnLength = (text: string): number => [...text].reduce((n, c) => n + ((c.codePointAt(0) ?? 0) >= 0x1100 ? 2 : 1), 0)
+
 /** One terminal: agent mark, a green dot while it is open, its title, then its workspace, muted — the
  *  order of the picker. A block is one terminal, and with the workspace first it read as a project whose
  *  buttons act on every terminal in it. In a block the chevron folds it; ↗ brings Orca to the terminal.
@@ -635,9 +656,12 @@ function TerminalLine({
   const kind = agentKind(live?.agent ?? t.agent)
   const name = t.title || t.workspace
   const where = t.title ? t.workspace : ''
-  // Marks, dot and buttons keep their width. Of the room left for words the title takes up to two thirds
-  // and the workspace the rest; each ends in …. The title is text, not a button: a Button does not shorten
-  // its text, and a long title ran over the marks and the buttons on both sides.
+  // Marks, dot and buttons keep their width. Of the room left for words the shorter of the two keeps its
+  // width — the workspace up to a third of the room, the title up to two thirds — and the other takes
+  // what is left and ends in …. With one fixed share for the title, a long title beside a four-letter
+  // workspace was cut while a quarter of the line stood empty. The title is text, not a button: a Button
+  // does not shorten its text, and a long title ran over the marks and the buttons on both sides.
+  const titleLong = drawnLength(name) > 2 * drawnLength(where)
   return (
     <Box direction="row" align="center" gap="xs">
       {fold ? (
@@ -655,12 +679,12 @@ function TerminalLine({
         </Text>
       </Box>
       <Box direction="row" align="center" gap="xs" grow shrink minWidth={0}>
-        <Box shrink={false} minWidth={0} maxWidth="66%">
+        <Box shrink={titleLong} minWidth={0} {...(titleLong ? {} : { maxWidth: '66%' as const })}>
           <Text size="xs" weight="medium" truncate>
             {name}
           </Text>
         </Box>
-        <Box grow shrink minWidth={0}>
+        <Box grow={!titleLong} shrink={!titleLong} minWidth={0} {...(titleLong ? { maxWidth: '34%' as const } : {})}>
           <Text size="xs" muted truncate>
             {where}
           </Text>
@@ -748,20 +772,34 @@ function RecordDetail({ r, glance }: { r: RunRecord; glance?: boolean }) {
 const wentWrong = (status: RunRecord['status']): boolean =>
   status === 'failed' || status === 'noResult' || status === 'aborted' || status === 'doneWaiting'
 
+/** What the plugin itself knows of a run that did not go well: it never went out, or its end was not seen. */
+const reasonCodes: readonly NoteCode[] = ['waitedOut', 'sendFailed', 'clearFailed', 'closed', 'timeout']
+
 function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
-  const status = statusText(read(lang), r.status)
-  const why = glance && wentWrong(r.status) && r.summary ? r.summary : null
+  const l = read(lang)
+  const status = statusText(l, r.status)
+  // What the agent wrote; when it wrote nothing, what the plugin knows — a run that waited an hour and
+  // was given up read, folded, like one an agent skipped.
+  const why =
+    glance && (wentWrong(r.status) || missed(r)) ? (r.summary ?? (r.note && reasonCodes.includes(r.note.code) ? noteText(l, r.note) : null)) : null
+  const tone = recordTone(r)
   const row = (
     <Box direction="row" align="start" gap="xs">
       {glance ? (
         // A word, not a badge: the mark at the card's left already has the colour.
         <Box shrink={false}>
-          <Text size="xs" weight="medium" tone={statusTone(r.status)}>
+          <Text size="xs" weight="medium" tone={tone}>
             {status}
           </Text>
         </Box>
+      ) : tone === 'neutral' ? (
+        // A grey badge has the card's own colour in a dark theme: only its padding showed, a word set a
+        // little to the right. The line makes it a pill like the coloured ones — as for the round mark.
+        <Box shrink={false} border radius="full">
+          <Badge tone={tone}>{status}</Badge>
+        </Box>
       ) : (
-        <Badge tone={statusTone(r.status)}>{status}</Badge>
+        <Badge tone={tone}>{status}</Badge>
       )}
       <Box grow shrink minWidth={0}>
         <RecordDetail r={r} glance={glance} />
@@ -1008,7 +1046,7 @@ function SentList({ list }: { list: Schedule[] }) {
           return (
             <Stack gap="none">
               <Box direction="row" align="center" gap="xs">
-                <Badge tone={statusTone(status)}>{status ? statusText(l, status) : u.waitingToSend}</Badge>
+                <Badge tone={ended ? recordTone(ended) : statusTone(status)}>{status ? statusText(l, status) : u.waitingToSend}</Badge>
                 <Box grow shrink minWidth={0}>
                   <Text size="xs" truncate>
                     {s.name}

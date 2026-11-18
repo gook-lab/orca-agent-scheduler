@@ -2,7 +2,7 @@
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
 import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
-import { statusText, whenText, words } from './i18n'
+import { recordText, statusText, whenText, words } from './i18n'
 import * as panel from './panel'
 import { zoneText } from './timespec'
 
@@ -298,7 +298,12 @@ test('a card starts with a round mark: what is going on now, else how the last r
   assert.deepEqual(await mark(ran('success')), ['✓', 'success', false])
   assert.deepEqual(await mark(ran('done')), ['✓', 'success', false], 'ended without a result line — still a finished run')
   assert.deepEqual(await mark(ran('failed')), ['✕', 'danger', false])
-  assert.deepEqual(await mark(ran('skipped')), ['–', 'warning', false])
+  assert.deepEqual(await mark(ran('skipped')), ['–', 'neutral', true], 'the agent said there was nothing to do — an ordinary result, not a warning')
+  assert.deepEqual(
+    await mark({ lastStatus: 'skipped', history: [{ at: Date.now() - 60_000, status: 'skipped', note: { code: 'waitedOut', reason: 'busy' } }] }),
+    ['–', 'warning', false],
+    'given up after an hour of waiting — a run that never went out'
+  )
   assert.deepEqual(await mark(ran('doneWaiting')), ['?', 'warning', false], 'stopped at a question')
   // What is going on now comes before the last result.
   assert.deepEqual(await mark({ ...ran('failed'), sentAt: Date.now() }), ['▸', 'accent', false], 'running')
@@ -1221,8 +1226,16 @@ test('a one-off send shows its result like a schedule does — how long, why it 
   })
   const failed = once('o2', 'Deploy notes', { lastStatus: 'failed', history: [{ at: at(11, 0), status: 'failed', note: { code: 'sendFailed', detail: 'terminal_handle_stale' } }] })
   const asking = once('o3', 'Pick a name', { lastStatus: 'doneWaiting', history: [{ at: at(10, 0), status: 'doneWaiting', tookMs: 60_000 }] })
-  await view.post('schedules.changed', { schedules: [done, failed, asking] })
-  await view.toggle(titled(view, 'Collapsible', 'Sent 3 · last today 12:03')!)
+  const nothing = once('o4', 'Sweep the notes', { lastStatus: 'skipped', history: [{ at: at(9, 30), status: 'skipped', tookMs: 20_000, summary: 'Nothing to sweep' }] })
+  const givenUp = once('o5', 'Late note', { lastStatus: 'skipped', history: [{ at: at(9, 0), status: 'skipped', note: { code: 'waitedOut', reason: 'busy' } }] })
+  await view.post('schedules.changed', { schedules: [done, failed, asking, nothing, givenUp] })
+  await view.toggle(titled(view, 'Collapsible', 'Sent 5 · last today 12:03')!)
+  assert.deepEqual(
+    view.findAll({ type: 'Badge', text: 'Skipped' }).map((e) => e.props.tone),
+    ['neutral', 'warning'],
+    'an agent with nothing to do — a plain badge; a send given up after an hour — orange'
+  )
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'today 09:30 · took 20 s'), 'a short run in seconds')
   assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === 'today 12:03 · took 4 min · github.com /acme/notes/pulls'))
   assert.ok(view.find({ type: 'Text', text: '2 PRs wait for review' }))
   assert.deepEqual(
@@ -1427,6 +1440,94 @@ test('a folded card says why the last run did not go well — one line of what t
   }
   assert.equal(shown('said success').length, 1, 'opened: what the agent wrote, as before')
   assert.equal(cut(), without, 'nothing is cut in an opened card')
+  await view.unmount()
+})
+
+test('a folded card says why a run never went out, or how it was lost — what the plugin knows, when the agent wrote nothing', async () => {
+  const view = await mount(panel, { host: host() })
+  type Record = Schedule['history'][number]
+  const card = (id: string, r: Omit<Record, 'at'>): Schedule => ({
+    ...blankSchedule(id),
+    name: `Check ${id}`,
+    terminal: { ...open[0] },
+    prompt: 'x',
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: r.status,
+    history: [{ at: Date.now() - 3600_000, ...r }]
+  })
+  const shown = (text: string) => view.findAll({ type: 'Text' }).filter((e) => plain(e.text) === text)
+  // The word after the mark, by card: its colour says whether a person may want to look.
+  const word = (text: string) => view.findAll({ type: 'Text', text }).map((e) => e.props.tone)
+  await view.post('schedules.changed', {
+    schedules: [
+      card('missed', { status: 'skipped', note: { code: 'waitedOut', reason: 'busy' } }),
+      card('nothing', { status: 'skipped', tookMs: 28_000, summary: 'Nothing changed since the last run' }),
+      card('unsent', { status: 'failed', note: { code: 'sendFailed', detail: 'terminal_handle_stale' } }),
+      card('closed', { status: 'aborted', tookMs: 60_000, note: { code: 'closed' } }),
+      card('said', { status: 'failed', tookMs: 60_000, note: { code: 'byScreen' }, summary: 'The build broke' }),
+      card('seen', { status: 'failed', tookMs: 60_000, note: { code: 'byScreen' } })
+    ]
+  })
+  assert.deepEqual(word('Skipped'), ['warning', 'neutral'], 'given up after an hour — orange; an agent with nothing to do — a plain word')
+  const [missed] = shown('Waited 60 min: agent is working')
+  assert.equal(missed?.props.truncate, true, 'the run that never went out says so, on one line')
+  assert.equal(shown('Nothing changed since the last run').length, 0, 'an ordinary skip keeps its summary for the opened card')
+  assert.equal(shown('Send failed: terminal_handle_stale').length, 1)
+  assert.equal(shown('Terminal closed — result unknown').length, 1)
+  assert.equal(shown('The build broke').length, 1, 'what the agent wrote comes first')
+  assert.equal(shown('by screen').length, 0, 'how an end was seen is not a reason')
+
+  await unfold(view)
+  assert.equal(shown('Waited 60 min: agent is working').length, 0, 'opened, the reason is in the record line — once')
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => /· Waited 60 min: agent is working$/.test(plain(e.text))))
+  assert.deepEqual(
+    view.findAll({ type: 'Badge', text: 'Skipped' }).map((e) => e.props.tone),
+    ['warning', 'neutral']
+  )
+  // A grey badge is the card's own colour in a dark theme — the line around it is what shows it.
+  const lined = view.findAll({ type: 'Box' }).filter((e) => e.props.border === true && e.props.radius === 'full' && e.text === 'Skipped')
+  assert.equal(lined.length, 1, 'the plain one gets a line; the orange one is a pill by itself')
+  await view.unmount()
+})
+
+test('a run of under a minute says its seconds — 17 seconds read `took 0 min`', () => {
+  const took = (ms: number) => [recordText('en', { tookMs: ms }), recordText('ko', { tookMs: ms })]
+  assert.deepEqual(took(17_000), ['took 17 s', '걸린 시간 17초'])
+  assert.deepEqual(took(59_999), ['took 59 s', '걸린 시간 59초'])
+  assert.deepEqual(took(400), ['took 1 s', '걸린 시간 1초'], 'never zero')
+  assert.deepEqual(took(60_000), ['took 1 min', '걸린 시간 1분'], 'from a minute on, minutes as before')
+  assert.deepEqual(took(4 * 60_000 + 40_000), ['took 5 min', '걸린 시간 5분'])
+  assert.equal(recordText('en', { lateMs: 62 * 60_000, tookMs: 20_000 }), 'sent 1 h 2 min late · took 20 s')
+})
+
+test('on a terminal line the shorter of title and workspace keeps its width — the other takes what is left', async () => {
+  const view = await mount(panel, { host: host() })
+  const on = (id: string, title: string, workspace: string): Schedule => ({
+    ...blankSchedule(id),
+    name: `Check ${id}`,
+    // Closed terminals: a line is drawn from what the schedule remembers.
+    terminal: { ...open[0], handle: `gone-${id}`, leafId: `gone-${id}`, title, workspace }
+  })
+  await view.post('schedules.changed', {
+    schedules: [
+      on('long', 'Review the open pull requests before lunch', 'toy'),
+      on('short', 'Notes', 'storefront-web-client'),
+      // Six Hangul letters are drawn about as wide as twelve Latin ones.
+      on('wide', '아침 정리 보고', 'notes')
+    ]
+  })
+  // The box around a word: whether it gives way when room runs out, whether it takes spare room, its cap.
+  const box = (text: string) => {
+    const found = view.findAll({ type: 'Box' }).filter((e) => e.text === text)
+    assert.equal(found.length, 1, text)
+    return [found[0].props.shrink, found[0].props.grow === true, found[0].props.maxWidth]
+  }
+  assert.deepEqual(box('Review the open pull requests before lunch'), [true, false, undefined], 'a long title gives way …')
+  assert.deepEqual(box('toy'), [false, false, '34%'], '… to a short workspace, which stays whole: no cut title beside empty room')
+  assert.deepEqual(box('Notes'), [false, false, '66%'], 'a short title stays whole')
+  assert.deepEqual(box('storefront-web-client'), [true, true, undefined], 'and a long workspace takes the rest')
+  assert.deepEqual(box('아침 정리 보고'), [true, false, undefined], 'Hangul counts double: this title is the long one')
+  assert.deepEqual([panel.drawnLength('abc de'), panel.drawnLength('토큰 교체')], [6, 9])
   await view.unmount()
 })
 

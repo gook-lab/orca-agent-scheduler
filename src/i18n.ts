@@ -88,9 +88,10 @@ const en = {
     notStarted: 'Turn start not confirmed',
     noLine: 'No result line on screen'
   } as Record<NoteCode, string>,
-  took: (min: string) => `took ${min}`,
+  took: (span: string) => `took ${span}`,
   late: (span: string) => `sent ${span} late`,
   minutes: (m: number) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`),
+  seconds: (s: number) => `${s} s`,
   awaitingAnswer: 'Waiting for an answer — check the terminal',
   /** Added to the end of a prompt whose schedule asks for a result (src/report.ts reads the line back). */
   reportAsk: (token: string) =>
@@ -324,9 +325,10 @@ const ko: Words = {
     notStarted: '시작 미확인',
     noLine: '화면에 결과 줄이 없음'
   },
-  took: (min) => `걸린 시간 ${min}`,
+  took: (span) => `걸린 시간 ${span}`,
   late: (span) => `${span} 늦게 보냄`,
   minutes: (m) => (m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`),
+  seconds: (s) => `${s}초`,
   awaitingAnswer: '질문·확인을 기다리며 멈춤 — 그 터미널을 확인해 주세요',
   reportAsk: (token) =>
     `끝나면 답의 마지막 줄을 이 형식으로 적는다: ${reportForm(token, '한 줄 요약')} — STATUS 는 ok · failed · skipped 중 하나, 링크가 없으면 「[link] URL」은 뺀다.`,
@@ -538,9 +540,13 @@ export const minutesText = (lang: Lang, ms: number): string => all[lang].minutes
 /** `sent 6 h 2 min late` for a run caught up after its time; empty when it went out on time. */
 export const lateText = (lang: Lang, lateMs: number | undefined): string => (lateMs === undefined ? '' : all[lang].late(minutesText(lang, lateMs)))
 
+/** How long a run took. Under a minute it is said in seconds: a run of 17 seconds read `took 0 min`. */
+export const tookText = (lang: Lang, ms: number): string =>
+  all[lang].took(ms < 60_000 ? all[lang].seconds(Math.max(1, Math.floor(ms / 1000))) : minutesText(lang, ms))
+
 /** History line after the status badge — how late it went out, how long it took, and why. */
 export function recordText(lang: Lang, r: { tookMs?: number; note?: Note; lateMs?: number }): string {
-  return [lateText(lang, r.lateMs), r.tookMs !== undefined ? all[lang].took(minutesText(lang, r.tookMs)) : '', r.note ? noteText(lang, r.note) : '']
+  return [lateText(lang, r.lateMs), r.tookMs !== undefined ? tookText(lang, r.tookMs) : '', r.note ? noteText(lang, r.note) : '']
     .filter(Boolean)
     .join(' · ')
 }

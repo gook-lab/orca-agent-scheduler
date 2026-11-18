@@ -2,6 +2,15 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.10 — 2026-11-18
+
+Orange is for a run a person may want to look at.
+
+- **`Skipped` no longer warns when the agent only had nothing to do.** Two things end as Skipped: an agent whose result line says there was nothing to do, and a run the plugin gave up because its terminal was not free for 60 minutes. Both were an orange `–`, and after an ordinary morning two of four cards stood orange. The agent's own skip is now grey — a plain word on a folded card, a pill with a line around it when opened — and orange is left to the run that never went out.
+- **A folded card says why a run never went out, or how it was lost.** Under the result it showed one line of what the agent wrote, and nothing when the agent wrote nothing: a run given up after an hour read `Skipped today 13:03`, like an agent's skip, and a failed send only `Failed`. That line now falls back on what the plugin knows — `Waited 60 min: agent is working`, `Send failed: …`, `/clear failed: …`, `Terminal closed — result unknown`, `Did not finish within 6 hours`.
+- **A run of under a minute says its seconds.** A 17-second run read `took 0 min`; it reads `took 17 s`. From a minute on, minutes as before.
+- **A title is no longer cut beside empty room.** On a terminal line the title had up to two thirds of the room for words whatever stood next to it, so beside a four-letter workspace a long title ended in … with a quarter of the line empty (2 of 10 lines at 380 px and 4 of 10 at 280 px, on a panel with ten terminals). Now the shorter of the two keeps its width — the workspace up to a third, the title up to two thirds — and the other takes what is left. Which is shorter is judged by letters, with Hangul, kana and CJK counting double. Checked at 280, 380 and 520 px.
+
 ## 0.12.9 — 2026-11-18
 
 A block reads as what it is: one terminal.

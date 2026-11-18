@@ -827,32 +827,19 @@ test('a terminal with schedules shows how many on the Terminals tab, and goes to
   await view.unmount()
 })
 
-test('favorites go first on both tabs and are kept in storage', async () => {
-  const view = await mount(panel, { host: host() })
+test('no favorites — terminals stand by workspace and title, and a list an earlier version stored is left alone', async () => {
+  const view = await mount(panel, { host: host({}, { storage: { favorites: ['l2'] } }) })
   const s = (id: string, t: TerminalOption): Schedule => ({ ...blankSchedule(id), name: id, terminal: { ...t } })
   await view.post('schedules.changed', { schedules: [s('a', open[0]), s('b', open[1])] })
   const blocks = () => view.findAll({ label: /— Show this terminal in Orca$/ }).map((e) => e.label)
-  assert.deepEqual(blocks(), ['Claude Code — Show this terminal in Orca', 'Codex — Show this terminal in Orca'])
-  // On and off are different marks. Drawn as the same star with a tone, a press showed nothing: Orca's
-  // ghost buttons ignore tone, and with one block there is no order to change either.
-  const stars = (mark: '☆' | '★') => view.findAll({ type: 'Button', text: mark })
-  assert.deepEqual([stars('☆').length, stars('★').length], [2, 0])
-  assert.equal(stars('☆')[1].props.tooltip, 'Add to favorites')
-  await view.press(stars('☆')[1])
-  assert.deepEqual(blocks(), ['Codex — Show this terminal in Orca', 'Claude Code — Show this terminal in Orca'], 'Review first')
-  assert.deepEqual(stars('★').map((e) => e.props.tooltip), ['Remove from favorites'], 'the star fills in')
-  assert.equal(stars('☆').length, 1)
-  assert.deepEqual(view.host.data().storage.favorites, ['l2'], 'by pane id')
+  const stars = () => view.findAll({ type: 'Button' }).filter((e) => e.text === '☆' || e.text === '★').length
+  assert.deepEqual(blocks(), ['Claude Code — Show this terminal in Orca', 'Codex — Show this terminal in Orca'], 'the starred one is not first')
+  assert.equal(stars(), 0)
   await view.select({ type: 'Tabs' }, 'terminals')
-  assert.deepEqual(blocks(), ['Codex — Show this terminal in Orca', 'Claude Code — Show this terminal in Orca'])
+  assert.deepEqual(blocks(), ['Claude Code — Show this terminal in Orca', 'Codex — Show this terminal in Orca'])
+  assert.equal(stars(), 0)
+  assert.deepEqual(view.host.data().storage.favorites, ['l2'], 'not read, not written')
   await view.unmount()
-  const again = await mount(panel, { host: host({}, { storage: { favorites: ['l2'] } }) })
-  await again.select({ type: 'Tabs' }, 'terminals')
-  assert.equal(again.findAll({ type: 'Button', text: '★' }).length, 1, 'remembered')
-  await again.press({ type: 'Button', text: '★' })
-  assert.deepEqual(again.host.data().storage.favorites, [])
-  assert.equal(again.findAll({ type: 'Button', text: '★' }).length, 0, 'and empties again')
-  await again.unmount()
 })
 
 
@@ -1067,7 +1054,7 @@ test('Settings and the form open under a line; Claude Code is not a star in the 
       ['Morning', 'bot'],
       ['Review', 'terminal']
     ],
-    'the ☆ beside a terminal means favorite'
+    'each agent has its own icon in the picker'
   )
   await view.press({ type: 'IconButton', label: 'Close' })
   await view.press({ label: 'Settings' })

@@ -112,8 +112,6 @@ const en = {
     discardTitle: 'Discard what you wrote?',
     discard: 'Discard',
     keepEditing: 'Keep editing',
-    favorite: 'Add to favorites',
-    unfavorite: 'Remove from favorites',
     noTerminals: 'No agent terminals are open in Orca',
     noTerminalsHint: 'Run claude, codex or gemini in an Orca terminal and it shows up here.',
     noCli: 'Orca CLI not found',
@@ -224,7 +222,7 @@ const en = {
         },
         {
           title: 'Start from a terminal',
-          body: 'On the Terminals tab, + makes a schedule and › sends a prompt once. ☆ keeps a terminal on top.'
+          body: 'On the Terminals tab, + makes a schedule and › sends a prompt once.'
         }
       ],
       step: (n: number, of: number) => `${n} / ${of}`,
@@ -349,8 +347,6 @@ const ko: Words = {
     discardTitle: '쓰던 내용을 버릴까요?',
     discard: '버리기',
     keepEditing: '계속 쓰기',
-    favorite: '즐겨찾기에 추가',
-    unfavorite: '즐겨찾기에서 빼기',
     noTerminals: 'Orca 에 열린 에이전트 터미널이 없습니다',
     noTerminalsHint: 'Orca 터미널에서 claude · codex · gemini 를 실행하면 여기 나옵니다.',
     noCli: 'Orca CLI 를 찾지 못했습니다',
@@ -459,7 +455,7 @@ const ko: Words = {
         },
         {
           title: '터미널에서 시작',
-          body: '「터미널」 탭에서 + 는 예약, › 는 한 번 보내기입니다. ☆ 를 누르면 그 터미널이 맨 위에 옵니다.'
+          body: '「터미널」 탭에서 + 는 예약, › 는 한 번 보내기입니다.'
         }
       ],
       step: (n, of) => `${n} / ${of}`,

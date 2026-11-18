@@ -28,7 +28,6 @@ import {
   Skeleton,
   Spinner,
   Stack,
-  storage,
   Switch,
   Tab,
   Tabs,
@@ -88,10 +87,6 @@ const importing = atom(false)
 /** How many schedules the last import added; null before one. */
 const importAdded = atom<number | null>(null)
 const importError = atom<string | null>(null)
-/** Favorite terminals by pane id, first in both tabs. Written to storage by hand — a persisted atom
- *  changed by a press fired its handler three times and ended on the old value. */
-const favorites = atom<string[]>([])
-const FAVORITES_KEY = 'favorites'
 /** The terminal list is being read — the reload button turns into a spinner. */
 const refreshing = atom(false)
 /** False once the worker says it found no Orca CLI — then no terminal can be listed, whatever is open. */
@@ -223,15 +218,6 @@ function showTerminals(): void {
   void refreshTerminals()
 }
 
-/** A pane keeps its id across Orca restarts; the handle does not. */
-const paneOf = (t: Pick<TerminalRef, 'leafId' | 'handle'>): string => t.leafId || t.handle
-const isFavorite = (t: Pick<TerminalRef, 'leafId' | 'handle'>): boolean => read(favorites).includes(paneOf(t))
-
-function toggleFavorite(t: TerminalRef): void {
-  const key = paneOf(t)
-  update(favorites, (keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]))
-  void storage.set(FAVORITES_KEY, read(favorites)).catch(() => undefined)
-}
 
 /** The reload button, or a spinner while the list is being read. */
 function ReloadButton() {
@@ -311,10 +297,6 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   ctx.subscriptions.push(plugin.on('terminals.changed', (p) => set(terminals, p.terminals)))
-  void storage
-    .get(FAVORITES_KEY)
-    .then((v) => (Array.isArray(v) ? set(favorites, v.filter((k): k is string => typeof k === 'string')) : undefined))
-    .catch(() => undefined)
   // Wakes the worker and gets the current list.
   void plugin
     .request('schedules.list')
@@ -628,9 +610,9 @@ function Stats() {
 
 // ───────────────────────── Terminal line — agent, live dot, name ─────────────────────────
 
-/** Picker icons — not 'star' for Claude Code: the ☆ beside a terminal is the favorite button. */
+/** Picker icons, one per agent. */
 const agentIcon: Record<AgentKind, IconName> = { claude: 'bot', codex: 'terminal', gemini: 'zap' }
-/** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles; ★ is the favorite button. */
+/** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles. */
 const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 
 /** One terminal: agent mark, a green dot while it is open, workspace and title. In a block, pressing the
@@ -651,7 +633,6 @@ function TerminalLine({
   const u = words(read(lang)).ui
   const kind = agentKind(live?.agent ?? t.agent)
   const name = t.workspace || t.title
-  const fav = isFavorite(live ?? t)
   // Marks, dot and name keep their width (squeezed, text broke a letter per line); the title takes what is
   // left and ends in …; the name stops at half the line.
   return (
@@ -659,11 +640,6 @@ function TerminalLine({
       {fold ? (
         <IconButton icon={fold.open ? 'collapse' : 'expand'} size="xs" variant="ghost" label={fold.open ? u.collapse : u.expand} onPress={fold.toggle} />
       ) : null}
-      {/* Two marks, not the star icon with a tone: a ghost button ignores its tone, so on and off looked
-          the same and a press seemed to do nothing. A button takes only text — hence no colour. */}
-      <Button size="xs" variant="ghost" tooltip={fav ? u.unfavorite : u.favorite} onPress={() => toggleFavorite(live ?? t)}>
-        {fav ? '★' : '☆'}
-      </Button>
       <Box shrink={false}>
         <Text size="xs" weight="semibold" tone={live ? 'accent' : 'neutral'} muted={!live}>
           {kind ? agentGlyph[kind] : '•'}
@@ -1168,9 +1144,6 @@ function SchedulesView() {
     const live = read(terminals)?.find((t) => sameTerminal(t, gone.terminal)) ?? null
     all.push({ key: gone.terminal.leafId || gone.terminal.handle, ref: live ?? gone.terminal, live, recurring: [], once: [] })
   }
-  const favs = read(favorites)
-  const rank = (g: Group) => (favs.includes(paneOf(g.live ?? g.ref)) ? 0 : 1)
-  all.sort((a, b) => rank(a) - rank(b))
   const groups = all.flatMap((g) => filterGroup(g, q) ?? (gone && holds(g, gone) ? [{ ...g, recurring: [], once: [] }] : []))
   return (
     <Stack gap="md">
@@ -1204,9 +1177,7 @@ function TerminalsView() {
   if (open === null) return <Skeleton shape="text" lines={3} label={u.loading} />
   if (open.length === 0) return <NoAgentTerminals />
   const q = read(query).trim().toLowerCase()
-  const favs = read(favorites)
-  const rank = (t: TerminalOption) => (favs.includes(paneOf(t)) ? 0 : 1)
-  const shown = open.filter((t) => matches(q, terminalTexts(t))).sort((a, b) => rank(a) - rank(b))
+  const shown = open.filter((t) => matches(q, terminalTexts(t)))
   if (shown.length === 0) return <NoMatch />
   const list = read(schedules)
   const countOf = (t: TerminalOption) => list.filter((s) => !s.once && sameTerminal(t, s.terminal)).length

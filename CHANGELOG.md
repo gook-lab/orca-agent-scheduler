@@ -2,6 +2,14 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.7 — 2026-11-18
+
+One button fewer on every terminal line.
+
+- **Favorites are gone.** The ☆ at the head of a terminal line did one thing: a starred terminal went first on both tabs. On the Schedules tab that orders the blocks, and with schedules on one or two terminals there is nothing to order; where a terminal is hard to find among many — the picker in the form — it never applied; and the search box finds a terminal on either tab. It cost a button on every line.
+- Terminals stand by workspace and title, as they did without a star. A list of favorites stored by an earlier version is left alone and no longer read.
+- The welcome pages no longer mention ☆.
+
 ## 0.12.6 — 2026-11-18
 
 Send now means seconds on a resting terminal.

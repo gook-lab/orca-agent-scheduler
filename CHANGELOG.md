@@ -2,6 +2,14 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.12.11 — 2026-11-19
+
+The README and the pictures are brought up to date. No change in behaviour.
+
+- **The pictures show the panel as it is now.** The two in the README and the plugin page's cover and screenshots were those of 0.12.1: they still showed the two lines above the list (removed in 0.12.5), the ☆ on every terminal line (removed in 0.12.7) and the workspace ahead of the terminal's title (reversed in 0.12.9).
+- **README states what it had left out.** A schedule keeps its terminal while its run is going. A time range stays within one day — one that passes midnight is two schedules. A schedule's history is its newest 30 runs. Permissions lists every case that shows a notification, and says that the plugin makes no network request of its own. `orca plugin uninstall` stands beside the update command, and the licence has its own line.
+- **Plainer wording.** Sixteen idioms are replaced (`now and then` → `occasionally`, `as ever` → `still`, `the way out` → `the next step`), the update command is given once instead of twice, and the CLI's path is written one way.
+
 ## 0.12.10 — 2026-11-18
 
 Orange is for a run a person may want to look at.

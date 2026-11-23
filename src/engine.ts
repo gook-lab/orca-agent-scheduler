@@ -157,6 +157,13 @@ export function nextAfter(cron: string, now: number): number | null {
 
 type Pane = Pick<TerminalRef, 'handle' | 'leafId'>
 
+/** The same terminal: same handle, or the same pane after Orca restarted under a new handle. */
+export const sameTerminal = (a: Pane, b: Pane): boolean => a.handle === b.handle || (!!a.leafId && a.leafId === b.leafId)
+
+/** Waiting on something a person must fix — the worker turns the status bar orange for the same. */
+export const needsAttention = (s: Schedule): boolean =>
+  s.blocked !== null || (s.pendingSince !== null && s.waitNote !== null && attentionCodes.includes(s.waitNote.code))
+
 /** The open terminal a reference points at — by handle, or by pane after Orca restarted. */
 export function locate<T extends Pane>(ref: Pane, live: T[]): T | null {
   return (

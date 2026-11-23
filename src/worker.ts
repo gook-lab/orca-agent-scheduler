@@ -13,21 +13,24 @@ import {
   type Io,
   limits,
   locate,
+  needsAttention,
   newMemory,
   nextAfter,
   type Notice,
   onAgentStatus,
   type RunRecord,
+  sameTerminal,
   type Schedule,
   type StatusEvent,
   type TerminalRef,
   tick
 } from './engine'
-import { attentionCodes, type Lang, langOf, lateText, type Note, noteText, type Status, statuses, statusText, words } from './i18n'
+import { type Lang, langOf, lateText, type Note, noteText, type Status, statuses, statusText, words } from './i18n'
 import { importedId, itemsFrom, scheduleFrom } from './orcacron'
 import { type ImportList, LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
 import { isWebLink } from './report'
 import { agentKind } from './screen'
+import { messageOf } from './text'
 import { clock } from './timespec'
 
 export const KEY = 'schedules'
@@ -79,8 +82,6 @@ function terminalFrom(value: unknown): TerminalRef {
   for (const k of Object.keys(terminal) as (keyof TerminalRef)[]) if (typeof from[k] === 'string') terminal[k] = from[k]
   return terminal
 }
-
-const samePane = (a: TerminalRef, b: TerminalRef): boolean => a.handle === b.handle || (a.leafId !== '' && a.leafId === b.leafId)
 
 /**
  * Schedules as storage holds them, read field by field. Older shapes miss fields or hold what this
@@ -170,7 +171,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       } catch (error) {
         const code = (error as HostError).code
         if (code && transientRead.has(code)) throw error
-        orca.log(`terminal.read ${handle}: ${code ?? ''} ${(error as Error).message}`)
+        orca.log(`terminal.read ${handle}: ${code ?? ''} ${messageOf(error)}`)
         return null
       }
     },
@@ -202,7 +203,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   const updateStatusBar = (): void => {
     const w = words(lang)
-    const stuck = list.filter((s) => s.blocked || (s.pendingSince !== null && s.waitNote && attentionCodes.includes(s.waitNote.code)))
+    const stuck = list.filter(needsAttention)
     const next = list
       .filter((s) => s.enabled && s.nextRunAt !== null)
       .sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))[0]
@@ -272,7 +273,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       await persist()
     })
       .then(() => pushTerminals())
-      .catch((error) => orca.log(`check failed: ${(error as Error).message}`))
+      .catch((error) => orca.log(`check failed: ${messageOf(error)}`))
   }
 
   // The panel shows which terminals are open; tell it when that changes.
@@ -327,7 +328,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       for (const s of going) if (s.sentAt === null) orca.log(`${s.name}: ${s.lastStatus} (agent ${ev.state})`)
       notify([...seen.notices, ...r.notices])
       if (seen.changed || r.changed) await persist()
-    }).catch((error) => orca.log(`agent event failed: ${(error as Error).message}`))
+    }).catch((error) => orca.log(`agent event failed: ${messageOf(error)}`))
   )
 
   orca.storage.onDidChange((change) => {
@@ -386,7 +387,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       const nextRunAt = nextAfter(cron, Date.now())
       if (nextRunAt === null) throw invalid(e.never)
       const old = draft.id ? list.find((s) => s.id === draft.id) : undefined
-      const moved = old !== undefined && !samePane(old.terminal, terminal)
+      const moved = old !== undefined && !sameTerminal(old.terminal, terminal)
       // Its end is read off the terminal it was sent to — moved now, the run would be closed by whatever
       // the other terminal's agent is doing.
       if (moved && old.sentAt !== null) throw invalid(e.running)
@@ -471,7 +472,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       found = text !== null
       file = text === null ? null : JSON.parse(text)
     } catch (error) {
-      orca.log(`OrcaCron schedules: ${(error as Error).message}`)
+      orca.log(`OrcaCron schedules: ${messageOf(error)}`)
     }
     const items = itemsFrom(file, `${dir}/tasks`)
     const open = items.length > 0 ? await terminalOptions().catch(() => []) : []

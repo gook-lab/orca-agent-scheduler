@@ -4,6 +4,7 @@ import { blankSchedule, type Schedule } from './engine'
 import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
 import { recordText, statusText, whenText, words } from './i18n'
 import * as panel from './panel'
+import { drawnLength, linkParts, soft } from './text'
 import { zoneText } from './timespec'
 
 const open: TerminalOption[] = [
@@ -1314,14 +1315,14 @@ test('nothing a person or an agent wrote can push a card wider than the panel �
   const longest = (text: string): number => Math.max(...text.split(/[\s\u200b]/).map((piece) => piece.length))
   // The site is the link, whole and on one line when it fits; the path breaks after its separators, and
   // inside an id that has none.
-  const address = panel.linkParts('https://claude.ai/artifact/a1B2c3D4e5F6g7H8i9J0k1L2m3N4')
+  const address = linkParts('https://claude.ai/artifact/a1B2c3D4e5F6g7H8i9J0k1L2m3N4')
   assert.equal(address.site, 'claude.ai')
   assert.equal(plain(address.path), '/artifact/a1B2c3D4e5F6g7H8i9J0k1L2m3N4', 'the same letters')
   assert.ok(address.path.startsWith('/\u200bartifact/\u200b'), 'a break after each separator')
   assert.ok(longest(address.path) <= 16)
-  assert.ok(longest(panel.linkParts(`https://docs.${'a'.repeat(60)}.example/`).site) <= 16, 'a site too long for any panel breaks too')
-  assert.equal(panel.soft('3 PRs need review'), '3 PRs need review', 'words with spaces are left as written')
-  assert.ok(longest(panel.soft(`see ${'x'.repeat(70)}`)) <= 16)
+  assert.ok(longest(linkParts(`https://docs.${'a'.repeat(60)}.example/`).site) <= 16, 'a site too long for any panel breaks too')
+  assert.equal(soft('3 PRs need review'), '3 PRs need review', 'words with spaces are left as written')
+  assert.ok(longest(soft(`see ${'x'.repeat(70)}`)) <= 16)
 
   // The card — name, record note, summary, link — draws them all that way.
   const run = 'A'.repeat(48)
@@ -1527,7 +1528,7 @@ test('on a terminal line the shorter of title and workspace keeps its width — 
   assert.deepEqual(box('Notes'), [false, false, '66%'], 'a short title stays whole')
   assert.deepEqual(box('storefront-web-client'), [true, true, undefined], 'and a long workspace takes the rest')
   assert.deepEqual(box('아침 정리 보고'), [true, false, undefined], 'Hangul counts double: this title is the long one')
-  assert.deepEqual([panel.drawnLength('abc de'), panel.drawnLength('토큰 교체')], [6, 9])
+  assert.deepEqual([drawnLength('abc de'), drawnLength('토큰 교체')], [6, 9])
   await view.unmount()
 })
 

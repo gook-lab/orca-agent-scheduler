@@ -38,28 +38,14 @@ import {
   type IconName,
   type PanelContext
 } from 'orca'
-import { nextRun, parseCron } from './cron'
+import { type Draft, dayModes, draftOf, cronOfDraft, emptyDraft, weekdaysOf } from './draft'
+import { filterGroup, type Group, groupsOf, holds, matches, terminalTexts } from './groups'
 import { needsAttention, type RunRecord, sameTerminal, type Schedule, type TerminalRef } from './engine'
 import { type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
 import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
-import {
-  clock,
-  cronOfSpec,
-  dateKey,
-  dateParts,
-  type Days,
-  daysOf,
-  describe,
-  lastMinute,
-  maxEvery,
-  maxTimes,
-  minuteFromText,
-  type Pattern,
-  specOfCron,
-  zoneText
-} from './timespec'
-import { messageOf } from './text'
+import { dateKey, dateParts, describe, maxTimes, minuteFromText, zoneText } from './timespec'
+import { messageOf, drawnLength, linkParts, soft } from './text'
 
 /** The worker's schedules — asked once, then pushed on every change. */
 const schedules = atom<Schedule[]>([])
@@ -113,52 +99,6 @@ const RELEASE_NOTES = 'https://github.com/gook-lab/orca-agent-scheduler/releases
 const TITLE = 'Agent Scheduler'
 const UNDO_MS = 8000
 
-type DayMode = 'everyDay' | 'weekdays' | 'weekends' | 'pick' | 'dates' | 'cron'
-const dayModes: DayMode[] = ['everyDay', 'weekdays', 'weekends', 'pick', 'dates', 'cron']
-
-type Draft = {
-  id?: string
-  /** Send once now — no days or times. */
-  once: boolean
-  name: string
-  handle: string
-  clearFirst: boolean
-  /** Ask the agent to end with a result line. */
-  report: boolean
-  day: DayMode
-  /** Pick days: 0 = Sunday … 6 = Saturday. */
-  picked: number[]
-  /** Dates: `YYYY-MM-DD`. */
-  dates: string[]
-  /** false = at set times, true = every N minutes. */
-  repeat: boolean
-  times: string[]
-  every: string
-  allDay: boolean
-  from: string
-  to: string
-  cron: string
-  prompt: string
-}
-
-const emptyDraft = (): Draft => ({
-  once: false,
-  name: '',
-  handle: '',
-  clearFirst: false,
-  report: true,
-  day: 'weekdays',
-  picked: [1, 2, 3, 4, 5],
-  dates: [],
-  repeat: false,
-  times: ['09:00'],
-  every: '30',
-  allDay: false,
-  from: '09:00',
-  to: '18:00',
-  cron: '0 9 * * 1-5',
-  prompt: ''
-})
 const draft = atom<Draft>(emptyDraft())
 const formOpen = atom(false)
 /** The form's terminal list is open — it starts folded to one line when the form came with a terminal. */
@@ -220,7 +160,6 @@ function showTerminals(): void {
   set(tab, 'terminals')
   void refreshTerminals()
 }
-
 
 /** The reload button, or a spinner while the list is being read. */
 function ReloadButton() {
@@ -318,79 +257,6 @@ export function setup(ctx: PanelContext): () => void {
   ;(tick as { unref?: () => void }).unref?.()
   return () => clearInterval(tick)
 }
-
-const weekdaysOf: Record<'everyDay' | 'weekdays' | 'weekends', number[]> = {
-  everyDay: [0, 1, 2, 3, 4, 5, 6],
-  weekdays: [1, 2, 3, 4, 5],
-  weekends: [0, 6]
-}
-
-/** The draft's days and times as cron, or why not. */
-function cronOfDraft(d: Draft, l: Lang): { cron: string } | { error: string } {
-  const e = words(l).error
-  const runs = (cron: string): boolean => {
-    const rules = parseCron(cron)
-    return !!rules && nextRun(rules, new Date()) !== null
-  }
-  if (d.day === 'cron') {
-    if (!parseCron(d.cron)) return { error: e.cron }
-    return runs(d.cron) ? { cron: d.cron.trim() } : { error: e.never }
-  }
-  let days: Days
-  if (d.day === 'pick') {
-    if (d.picked.length === 0) return { error: e.noDays }
-    days = daysOf(d.picked)
-  } else if (d.day === 'dates') {
-    if (d.dates.length === 0) return { error: e.noDates }
-    days = { kind: 'dates', dates: d.dates }
-  } else {
-    days = { kind: d.day }
-  }
-  let pattern: Pattern
-  if (!d.repeat) {
-    const list = d.times.map(minuteFromText)
-    if (list.length === 0 || list.some((m) => m === null)) return { error: e.times }
-    if (list.length > maxTimes) return { error: e.tooManyTimes }
-    pattern = { kind: 'times', list: list as number[] }
-  } else {
-    const n = Number(d.every)
-    if (!Number.isInteger(n) || n < 1 || n > maxEvery) return { error: e.every }
-    const from = d.allDay ? 0 : minuteFromText(d.from)
-    const to = d.allDay ? lastMinute : minuteFromText(d.to)
-    if (from === null || to === null) return { error: e.times }
-    if (from > to) return { error: e.range }
-    pattern = { kind: 'every', n, from, to }
-  }
-  const cron = cronOfSpec({ days, pattern })
-  if (!cron) return { error: e.times }
-  return runs(cron) ? { cron } : { error: e.never }
-}
-
-/** A saved cron back into the form; a cron the form did not make opens as "Cron". */
-function draftOfCron(cron: string): Partial<Draft> {
-  const spec = specOfCron(cron)
-  if (!spec) return { day: 'cron', cron }
-  const out: Partial<Draft> = { cron }
-  const days = spec.days
-  if (days.kind === 'some') Object.assign(out, { day: 'pick', picked: days.set })
-  else if (days.kind === 'dates') Object.assign(out, { day: 'dates', dates: days.dates })
-  else Object.assign(out, { day: days.kind, picked: weekdaysOf[days.kind] })
-  const p = spec.pattern
-  if (p.kind === 'times') Object.assign(out, { repeat: false, times: p.list.map(clock) })
-  else Object.assign(out, { repeat: true, every: String(p.n), allDay: p.from === 0 && p.to === lastMinute, from: clock(p.from), to: clock(p.to) })
-  return out
-}
-
-const draftOf = (s: Schedule): Draft => ({
-  ...emptyDraft(),
-  ...draftOfCron(s.cron),
-  id: s.id,
-  name: s.name,
-  handle: s.terminal.handle,
-  clearFirst: s.clearFirst,
-  report: s.report,
-  prompt: s.prompt
-})
 
 const edit = (s: Schedule): void => openForm(draftOf(s))
 
@@ -629,9 +495,6 @@ const agentIcon: Record<AgentKind, IconName> = { claude: 'bot', codex: 'terminal
 /** Each agent's own mark as text — Claude Code puts ✳ in its terminal titles. */
 const agentGlyph: Record<AgentKind, string> = { claude: '✳', codex: '>_', gemini: '✦' }
 
-/** About how wide a text is drawn, in Latin letters: Hangul, kana and CJK take about two. */
-export const drawnLength = (text: string): number => [...text].reduce((n, c) => n + ((c.codePointAt(0) ?? 0) >= 0x1100 ? 2 : 1), 0)
-
 /** One terminal: agent mark, a green dot while it is open, its title, then its workspace, muted — the
  *  order of the picker. A block is one terminal, and with the workspace first it read as a project whose
  *  buttons act on every terminal in it. In a block the chevron folds it; ↗ brings Orca to the terminal.
@@ -717,24 +580,6 @@ function TerminalLine({
 }
 
 // ───────────────────────── Schedule — switch, actions, next run, last result ─────────────────────────
-
-const BREAK = '\u200b'
-
-/** Text a person or an agent wrote, with places to break inside a long run of letters — an id, a path,
- *  a name with no spaces. Unbroken, one such run pushed its card wider than the panel and the whole
- *  panel scrolled sideways (a 304 px panel, 2026-11-17). */
-export const soft = (text: string): string => text.replace(/([^\s\u200b]{16})(?=[^\s\u200b])/g, `$1${BREAK}`)
-
-/** A link as it is drawn. The site — what a person reads to know where the link leads — is the link,
- *  whole; the start of the path follows as text, with a place to break after each separator. Orca draws
- *  a link as a button, which centres its text once it wraps, so the long part stays outside it. */
-export function linkParts(url: string): { site: string; path: string } {
-  const bare = url.replace(/^https?:\/\//i, '')
-  const site = bare.split(/[/?#]/, 1)[0]
-  const rest = bare.slice(site.length)
-  const path = rest.length > 40 ? `${rest.slice(0, 39)}…` : rest
-  return { site: soft(site), path: soft(path.replace(/([/?#&=._-])(?=.)/g, `$1${BREAK}`)) }
-}
 
 /** A record beside its badge. What the agent wrote comes first — it is what the run was for — then when,
  *  how long and the link, in one line that wraps. `glance` is the folded card's reading. */
@@ -1076,40 +921,6 @@ function SentList({ list }: { list: Schedule[] }) {
 }
 
 // ───────────────────────── Blocks — one per terminal ─────────────────────────
-
-type Group = { key: string; ref: TerminalRef; live: TerminalOption | null; recurring: Schedule[]; once: Schedule[] }
-
-/** Schedules by terminal — a closed terminal keeps its block. */
-function groupsOf(list: Schedule[], open: TerminalOption[] | null): Group[] {
-  const groups = new Map<string, Group>()
-  for (const s of list) {
-    const live = open?.find((t) => sameTerminal(t, s.terminal)) ?? null
-    const key = live?.leafId || s.terminal.leafId || live?.handle || s.terminal.handle || s.id
-    const g = groups.get(key) ?? { key, ref: live ?? s.terminal, live, recurring: [], once: [] }
-    ;(s.once ? g.once : g.recurring).push(s)
-    groups.set(key, g)
-  }
-  return [...groups.values()].sort((a, b) => a.ref.workspace.localeCompare(b.ref.workspace) || a.ref.title.localeCompare(b.ref.title))
-}
-
-/** True when the search is empty or one of the texts contains it (`q` lower-cased). */
-const matches = (q: string, texts: string[]): boolean => !q || texts.some((t) => t.toLowerCase().includes(q))
-
-const terminalTexts = (t: TerminalRef): string[] => {
-  const kind = agentKind(t.agent)
-  return [t.title, t.workspace, kind ? agentName[kind] : t.agent]
-}
-
-/** A block whose terminal matches stays whole; otherwise it keeps only the schedules whose name matches. */
-function filterGroup(g: Group, q: string): Group | null {
-  if (matches(q, terminalTexts(g.ref))) return g
-  const recurring = g.recurring.filter((s) => matches(q, [s.name]))
-  const once = g.once.filter((s) => matches(q, [s.name]))
-  return recurring.length + once.length > 0 ? { ...g, recurring, once } : null
-}
-
-/** The block a schedule belongs to. */
-const holds = (g: Group, s: Schedule): boolean => sameTerminal(g.ref, s.terminal) || (!!g.live && sameTerminal(g.live, s.terminal))
 
 function TerminalBlock({ g }: { g: Group }) {
   const l = read(lang)

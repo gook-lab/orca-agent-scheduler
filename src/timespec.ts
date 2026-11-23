@@ -6,6 +6,7 @@
 // Picked dates use the sixth (year) field and run only on those days (`0 9 20,25 11 * 2026`).
 import { parseCron, type CronRule } from './cron'
 import { type Lang, words } from './i18n'
+import { pad2 } from './text'
 
 /** A picked date, `YYYY-MM-DD`. */
 export type DayDate = string
@@ -24,13 +25,14 @@ export type Pattern = { kind: 'times'; list: number[] } | { kind: 'every'; n: nu
 export type TimeSpec = { days: Days; pattern: Pattern }
 
 export const maxTimes = 24
+const dayMinutes = 24 * 60
+export const lastMinute = dayMinutes - 1
 export const maxEvery = 720
 export const maxDates = 366
 
-export const pad = (n: number): string => (n < 10 ? `0${n}` : `${n}`)
-export const clock = (minute: number): string => `${pad(Math.floor(minute / 60))}:${pad(minute % 60)}`
+export const clock = (minute: number): string => `${pad2(Math.floor(minute / 60))}:${pad2(minute % 60)}`
 
-export const dateKey = (y: number, m: number, d: number): DayDate => `${y}-${pad(m)}-${pad(d)}`
+export const dateKey = (y: number, m: number, d: number): DayDate => `${y}-${pad2(m)}-${pad2(d)}`
 export const dateParts = (key: DayDate): [number, number, number] => key.split('-').map(Number) as [number, number, number]
 
 function validDate(y: number, m: number, d: number): boolean {
@@ -86,7 +88,7 @@ function compress(list: number[], max: number): string {
 /** "min hour" of each expression. */
 function clockFields(p: Pattern): string[] | null {
   if (p.kind === 'times') {
-    const ms = [...new Set(p.list)].filter((t) => t >= 0 && t < 1440)
+    const ms = [...new Set(p.list)].filter((t) => t >= 0 && t < dayMinutes)
     if (ms.length === 0) return null
     const byMinute = new Map<number, number[]>()
     for (const t of ms) byMinute.set(t % 60, [...(byMinute.get(t % 60) ?? []), Math.floor(t / 60)])
@@ -96,7 +98,7 @@ function clockFields(p: Pattern): string[] | null {
       .map(({ m, hours }) => `${m} ${hours.join(',')}`)
   }
   const { n, from, to } = p
-  if (!(n >= 1 && n <= maxEvery) || from < 0 || from > to || to >= 1440) return null
+  if (!(n >= 1 && n <= maxEvery) || from < 0 || from > to || to >= dayMinutes) return null
   const minutesByHour = new Map<number, number[]>()
   for (let t = from; t <= to; t += n) minutesByHour.set(Math.floor(t / 60), [...(minutesByHour.get(Math.floor(t / 60)) ?? []), t % 60])
   // Hours with the same minutes share one expression (every 5 min 07:00–08:00 → `*/5 7`, `0 8`).
@@ -185,7 +187,7 @@ export function specOfCron(expression: string): TimeSpec | null {
   if (stepped && list.length >= 3 && s !== null && s <= maxEvery) {
     // Running to the end of the day keeps the end at 23:59 so it reopens as "All day".
     const last = list[list.length - 1]
-    return { days, pattern: { kind: 'every', n: s, from: list[0], to: last + s >= 1440 ? 1439 : last } }
+    return { days, pattern: { kind: 'every', n: s, from: list[0], to: last + s >= dayMinutes ? lastMinute : last } }
   }
   if (list.length > maxTimes) return null
   return { days, pattern: { kind: 'times', list } }
@@ -235,16 +237,16 @@ export function specSummary(spec: TimeSpec, lang: Lang): string {
     const ts = [...new Set(p.list)].sort((a, b) => a - b)
     const sameMinute = new Set(ts.map((t) => t % 60)).size === 1
     if (sameMinute && ts.length >= 4) {
-      const hours = ts.map((t) => pad(Math.floor(t / 60))).join('·')
-      return lang === 'ko' ? `${days} ${hours}시 ${pad(ts[0] % 60)}분` : `${days} at :${pad(ts[0] % 60)} past ${hours}`
+      const hours = ts.map((t) => pad2(Math.floor(t / 60))).join('·')
+      return lang === 'ko' ? `${days} ${hours}시 ${pad2(ts[0] % 60)}분` : `${days} at :${pad2(ts[0] % 60)} past ${hours}`
     }
     return `${days} ${ts.map(clock).join(' · ')}`
   }
   const { n, from, to } = p
-  const wholeDay = to + n >= 1440
+  const wholeDay = to + n >= dayMinutes
   if (n === 60 && from < 60 && wholeDay) {
-    if (lang === 'ko') return `${everyDay ? '' : `${days} `}매시 ${pad(from)}분`
-    return `${everyDay ? 'Hourly' : `${days}, hourly`} at :${pad(from)}`
+    if (lang === 'ko') return `${everyDay ? '' : `${days} `}매시 ${pad2(from)}분`
+    return `${everyDay ? 'Hourly' : `${days}, hourly`} at :${pad2(from)}`
   }
   const interval = intervalText(n, lang)
   if (from === 0 && wholeDay) {
@@ -299,7 +301,7 @@ export function zoneText(now: Date = new Date()): string {
   const offset = -now.getTimezoneOffset()
   const hours = Math.floor(Math.abs(offset) / 60)
   const minutes = Math.abs(offset) % 60
-  const utc = `UTC${offset < 0 ? '−' : '+'}${hours}${minutes ? `:${String(minutes).padStart(2, '0')}` : ''}`
+  const utc = `UTC${offset < 0 ? '−' : '+'}${hours}${minutes ? `:${pad2(minutes)}` : ''}`
   const name = Intl.DateTimeFormat().resolvedOptions().timeZone
   return name ? `${name}, ${utc}` : utc
 }

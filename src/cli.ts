@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import type { LiveTerminal, SendResult } from './engine'
+import { messageOf } from './text'
 
 export type CliResult = { ok: true; result: unknown } | { ok: false; error: string }
 export type CliRunner = (args: string[]) => Promise<CliResult>
@@ -36,7 +37,7 @@ export function cliRunner(bin: string, timeoutMs = 60_000): CliRunner {
       try {
         execFile(bin, [...args, '--json'], { timeout: timeoutMs, maxBuffer: 8 << 20 }, (error, stdout) => resolve(parseCli(stdout, error)))
       } catch (error) {
-        resolve({ ok: false, error: (error as Error).message })
+        resolve({ ok: false, error: messageOf(error) })
       }
     })
 }

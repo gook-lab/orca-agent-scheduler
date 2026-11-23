@@ -1,12 +1,12 @@
 // Panel, notification and history text in English (default) and Korean. Records keep codes, not
 // sentences, so switching the language redraws past runs too.
 import { reportForm } from './report'
+import { pad2 } from './text'
 
 export type Lang = 'en' | 'ko'
 
 export const langOf = (value: unknown): Lang => (value === 'ko' ? 'ko' : 'en')
 
-const pad2 = (n: number): string => String(n).padStart(2, '0')
 /** Days, hours, minutes and seconds left in `ms`, counting whole seconds. */
 const parts = (ms: number): [number, number, number, number] => {
   const t = Math.max(0, Math.floor(ms / 1000))
@@ -134,15 +134,15 @@ const en = {
       pick: 'Pick days',
       dates: 'Dates',
       cron: 'Cron'
-    } as Record<string, string>,
+    },
     time: 'Time',
     clock: (zone: string) => `Times are this computer's local time (${zone}).`,
-    pattern: { times: 'At set times', every: 'Repeat' } as Record<string, string>,
+    pattern: { times: 'At set times', every: 'Repeat' },
     timeN: (n: number) => `Time ${n}`,
     addTime: 'Add time',
     removeTime: (n: number) => `Remove time ${n}`,
     everyMinutes: 'Every (minutes)',
-    range: { allDay: 'All day', between: 'Between' } as Record<string, string>,
+    range: { allDay: 'All day', between: 'Between' },
     from: 'From',
     to: 'To',
     cron: 'Cron expression',
@@ -558,7 +558,7 @@ export const attentionCodes: readonly NoteCode[] = ['missing', 'noAgent', 'typin
 export function whenText(lang: Lang, at: number, now: number = Date.now()): string {
   const w = all[lang]
   const d = new Date(at)
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
   const day = (t: Date) => new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
   const diff = Math.round((day(d) - day(new Date(now))) / 86_400_000)
   if (diff === 0) return `${w.ui.today} ${hm}`

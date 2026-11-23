@@ -39,8 +39,8 @@ import {
   type PanelContext
 } from 'orca'
 import { nextRun, parseCron } from './cron'
-import type { RunRecord, Schedule, TerminalRef } from './engine'
-import { attentionCodes, type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
+import { needsAttention, type RunRecord, sameTerminal, type Schedule, type TerminalRef } from './engine'
+import { type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
 import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import {
@@ -51,12 +51,15 @@ import {
   type Days,
   daysOf,
   describe,
+  lastMinute,
+  maxEvery,
   maxTimes,
   minuteFromText,
   type Pattern,
   specOfCron,
   zoneText
 } from './timespec'
+import { messageOf } from './text'
 
 /** The worker's schedules — asked once, then pushed on every change. */
 const schedules = atom<Schedule[]>([])
@@ -207,7 +210,7 @@ async function runImport(ids: string[]): Promise<void> {
     set(importAdded, r.added)
     await loadImport()
   } catch (error) {
-    set(importError, (error as Error).message)
+    set(importError, messageOf(error))
   } finally {
     set(importing, false)
   }
@@ -351,9 +354,9 @@ function cronOfDraft(d: Draft, l: Lang): { cron: string } | { error: string } {
     pattern = { kind: 'times', list: list as number[] }
   } else {
     const n = Number(d.every)
-    if (!Number.isInteger(n) || n < 1 || n > 720) return { error: e.every }
+    if (!Number.isInteger(n) || n < 1 || n > maxEvery) return { error: e.every }
     const from = d.allDay ? 0 : minuteFromText(d.from)
-    const to = d.allDay ? 1439 : minuteFromText(d.to)
+    const to = d.allDay ? lastMinute : minuteFromText(d.to)
     if (from === null || to === null) return { error: e.times }
     if (from > to) return { error: e.range }
     pattern = { kind: 'every', n, from, to }
@@ -374,7 +377,7 @@ function draftOfCron(cron: string): Partial<Draft> {
   else Object.assign(out, { day: days.kind, picked: weekdaysOf[days.kind] })
   const p = spec.pattern
   if (p.kind === 'times') Object.assign(out, { repeat: false, times: p.list.map(clock) })
-  else Object.assign(out, { repeat: true, every: String(p.n), allDay: p.from === 0 && p.to === 1439, from: clock(p.from), to: clock(p.to) })
+  else Object.assign(out, { repeat: true, every: String(p.n), allDay: p.from === 0 && p.to === lastMinute, from: clock(p.from), to: clock(p.to) })
   return out
 }
 
@@ -421,9 +424,6 @@ async function focusTerminal(handle: string): Promise<void> {
   if (!r.ok) await refreshTerminals()
 }
 
-const sameTerminal = (a: Pick<TerminalRef, 'handle' | 'leafId'>, b: Pick<TerminalRef, 'handle' | 'leafId'>): boolean =>
-  a.handle === b.handle || (!!a.leafId && a.leafId === b.leafId)
-
 async function save(): Promise<void> {
   const l = read(lang)
   const d = read(draft)
@@ -448,7 +448,7 @@ async function save(): Promise<void> {
     closeForm()
     showSaved(saved)
   } catch (error) {
-    set(formError, (error as Error).message)
+    set(formError, messageOf(error))
   } finally {
     set(saving, false)
   }
@@ -520,10 +520,6 @@ const markOf = (
               : '•'
   return { tone, glyph }
 }
-
-/** Waiting on something a person must fix — the worker turns the status bar orange for the same. */
-const needsAttention = (s: Schedule): boolean =>
-  s.blocked !== null || (s.pendingSince !== null && s.waitNote !== null && attentionCodes.includes(s.waitNote.code))
 
 /** What a person can do about a note from the card: pick another terminal, or go to this one and answer it. */
 const fixOf: Partial<Record<NoteCode, 'pick' | 'show'>> = {
@@ -1009,7 +1005,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
             <Collapsible title={u.history(s.history.length)}>
               <Stack gap="xs">
                 {s.history.map((r) => (
-                  <RecordLine r={r} />
+                  <RecordLine key={r.at} r={r} />
                 ))}
               </Stack>
             </Collapsible>
@@ -1044,7 +1040,7 @@ function SentList({ list }: { list: Schedule[] }) {
           const status = s.pendingSince !== null ? null : s.sentAt !== null ? 'sent' : s.lastStatus
           const ended = s.pendingSince === null && s.sentAt === null ? s.history[0] : undefined
           return (
-            <Stack gap="none">
+            <Stack key={s.id} gap="none">
               <Box direction="row" align="center" gap="xs">
                 <Badge tone={ended ? recordTone(ended) : statusTone(status)}>{status ? statusText(l, status) : u.waitingToSend}</Badge>
                 <Box grow shrink minWidth={0}>
@@ -1145,7 +1141,7 @@ function TerminalBlock({ g }: { g: Group }) {
         // Cards stand a little apart from each other, and closer to the terminal line they belong to.
         <Stack gap="sm">
           {g.recurring.map((s) => (
-            <ScheduleRow s={s} live={g.live} />
+            <ScheduleRow key={s.id} s={s} live={g.live} />
           ))}
           {g.once.length > 0 ? <SentList list={g.once} /> : null}
         </Stack>
@@ -1187,7 +1183,7 @@ function SchedulesView() {
       <Stats />
       {groups.length === 0 ? <NoMatch /> : null}
       {groups.map((g) => (
-        <TerminalBlock g={g} />
+        <TerminalBlock key={g.key} g={g} />
       ))}
     </Stack>
   )
@@ -1221,7 +1217,7 @@ function TerminalsView() {
   return (
     <Stack gap="xs">
       {shown.map((t) => (
-        <TerminalLine term={t} live={t} count={countOf(t)} />
+        <TerminalLine key={t.handle} term={t} live={t} count={countOf(t)} />
       ))}
     </Stack>
   )
@@ -1237,6 +1233,7 @@ function DayPicker() {
         const on = d.picked.includes(day)
         return (
           <Button
+            key={day}
             size="sm"
             variant={on ? 'solid' : 'outline'}
             tone={on ? 'accent' : 'neutral'}
@@ -1283,7 +1280,7 @@ function DateCalendar() {
       </Box>
       <Box direction="row">
         {w.weekdays.map((name) => (
-          <Box width="14%" align="center">
+          <Box key={name} width="14%" align="center">
             <Text muted size="xs">
               {name}
             </Text>
@@ -1291,13 +1288,13 @@ function DateCalendar() {
         ))}
       </Box>
       {weeks.map((week) => (
-        <Box direction="row">
-          {week.map((day) => {
-            if (day === null) return <Box width="14%" />
+        <Box key={week.join(',')} direction="row">
+          {week.map((day, i) => {
+            if (day === null) return <Box key={`blank-${i}`} width="14%" />
             const key = dateKey(y, m, day)
             const on = d.dates.includes(key)
             return (
-              <Box width="14%" align="stretch" padding="none">
+              <Box key={day} width="14%" align="stretch" padding="none">
                 <Button size="xs" variant={on ? 'solid' : 'ghost'} tone={on ? 'accent' : 'neutral'} disabled={key < todayKey} onPress={() => toggle(key)}>
                   {String(day)}
                 </Button>
@@ -1464,7 +1461,8 @@ function Form() {
   const c = d.once ? null : cronOfDraft(d, l)
   const patch = (p: Partial<Draft>) => update(draft, (x) => ({ ...x, ...p }))
   const changeDay = (v: string) => {
-    const day = v as DayMode
+    const day = dayModes.find((m) => m === v)
+    if (!day) return
     const p: Partial<Draft> = { day }
     // From every day · weekdays · weekends into "Pick days", start with those days on.
     if (day === 'pick' && (d.day === 'everyDay' || d.day === 'weekdays' || d.day === 'weekends')) p.picked = weekdaysOf[d.day]
@@ -1617,7 +1615,7 @@ function Importer() {
       </Stack>
       <Stack gap="xs">
         {data.items.map((i) => (
-          <Box direction="row" align="start" gap="xs">
+          <Box key={i.id} direction="row" align="start" gap="xs">
             <Box grow shrink minWidth={0}>
               <Text size="xs" weight="medium">
                 {soft(i.name)}

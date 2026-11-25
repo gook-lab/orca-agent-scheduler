@@ -2,6 +2,15 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.13.0 — 2026-11-25
+
+A schedule can pick up where its last run left off, and can ask a command whether to go out at all.
+
+- **Prompt variables.** `{{date}}`, `{{time}}`, `{{last_run}}`, `{{last_result}}`, `{{last_link}}` and `{{precheck}}` are filled in when the prompt goes out; `{{last_result|none}}` uses the text after `|` when there is no value. A value goes in as one line (its lines joined with `; `) — a line break could reach the agent's input box as Enter and send half the prompt — and is cut at 2,000 characters. The saved prompt keeps its variables. The form lists them under the prompt, and says so when `{{precheck}}` has no command to fill it.
+- **Precheck.** A shell command under **Precheck** in the form runs once the terminal is free, just before the prompt (and before `/clear`): exit 0 sends, and what it printed is `{{precheck}}`; another exit skips the run in grey, with the code and the command's last line on the card (`Precheck said no: exit 1 — no open pull requests`). A command that cannot run — exit 126 or 127, over 30 seconds, no shell — fails the run with a notification, since a typo is not a no. It runs in your login shell, in the terminal's workspace folder when that folder is on this computer.
+- **Checked live** on Orca 1.4.274 with Claude Code (Haiku): the precheck ran in a folder workspace's folder with Homebrew's `gh` on `PATH`, its three lines arrived as one; `exit 1` left the terminal untouched; the next run's `{{last_result}}` held the summary the agent had written the run before.
+- **README** says where the plugin differs from Orca's own Automations, which start a session per run, and has sections for both features.
+
 ## 0.12.11 — 2026-11-19
 
 The README and the pictures are brought up to date. No change in behaviour.

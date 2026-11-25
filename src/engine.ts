@@ -7,6 +7,7 @@ import { nextRun, parseCron } from './cron'
 import { attentionCodes, type Lang, type Note, type NoteCode, type Status, words } from './i18n'
 import { readReport, type Report, reportToken } from './report'
 import { agentKind, permissionPrompt, promptState } from './screen'
+import { fillPrompt, flatten } from './vars'
 
 export type RunRecord = {
   at: number
@@ -59,6 +60,8 @@ export type Schedule = {
   report: boolean
   /** Send once — no times; due when saved, then kept as a record of what was sent. */
   once: boolean
+  /** A shell command run before the prompt goes out: exit 0 sends, another exit skips the run ('' = none). */
+  precheck: string
   nextRunAt: number | null
   /** Due and waiting for the terminal to be idle (the time it fell due). */
   pendingSince: number | null
@@ -79,6 +82,9 @@ export type AgentStatus = 'working' | 'blocked' | 'waiting' | 'done'
 
 export type SendResult = { started: boolean } | { error: string }
 
+/** How a precheck command ended. `code` is null when it did not exit by itself (timed out, killed). */
+export type CheckResult = { code: number | null; output: string } | { error: string }
+
 export type Io = {
   /** The tail of the screen. Null when the terminal is gone; throws when it cannot read right now. */
   read(handle: string): Promise<string[] | null>
@@ -86,6 +92,8 @@ export type Io = {
   send(handle: string, text: string): Promise<SendResult>
   /** Terminals open now. Null when unknown. */
   terminals(): Promise<LiveTerminal[] | null>
+  /** Runs a schedule's precheck command, in that workspace's folder when it is on this computer. */
+  check(command: string, workspaceId: string): Promise<CheckResult>
 }
 
 export type Memory = {
@@ -95,9 +103,12 @@ export type Memory = {
   /** Ids of schedules whose waiting run a person asked for just now (Send now, Send once) — it goes out
    *  after limits.askedQuietMs, not the full minute. Forgotten once the run goes out or is given up. */
   asked: Set<string>
+  /** A precheck that let the run go, by schedule id: for which run (its pendingSince) and what it printed.
+   *  Kept so the run that sent /clear first does not run the command again a check later. */
+  checked: Map<string, { for: number; output: string }>
 }
 
-export const newMemory = (): Memory => ({ screens: new Map(), agents: new Map(), asked: new Set() })
+export const newMemory = (): Memory => ({ screens: new Map(), agents: new Map(), asked: new Set(), checked: new Map() })
 
 export const limits = {
   /** A due run that cannot go out for this long is skipped. */
@@ -137,6 +148,7 @@ export function blankSchedule(id: string): Schedule {
     clearFirst: false,
     report: false,
     once: false,
+    precheck: '',
     nextRunAt: null,
     pendingSince: null,
     waitNote: null,
@@ -263,6 +275,12 @@ export type TickResult = { log: string[]; notices: Notice[] }
  *  result ask added to a prompt. */
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/** The last line a command printed, short enough for a card. */
+const lastLine = (output: string): string => {
+  const line = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? ''
+  return flatten(line.length > 160 ? `${line.slice(0, 159)}…` : line)
+}
+
 export async function tick(list: Schedule[], io: Io, memory: Memory, now: number, lang: Lang = 'en'): Promise<TickResult> {
   const log: string[] = []
   const notices: Notice[] = []
@@ -325,6 +343,28 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     } catch (error) {
       return { error: errorText(error) }
     }
+  }
+
+  // 0 goes; another exit is the command's no and skips the run. A command that could not run says nothing
+  // about the condition — a typo (126, 127), a time-out, a spawn error — and fails the run instead.
+  const precheck = async (
+    command: string,
+    workspaceId: string
+  ): Promise<{ go: true; output: string } | { go: false; status: Status; note: Note }> => {
+    let r: CheckResult
+    try {
+      r = await io.check(command, workspaceId)
+    } catch (error) {
+      r = { error: errorText(error) }
+    }
+    if ('error' in r) return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: r.error } }
+    if (r.code === 0) return { go: true, output: r.output }
+    const said = lastLine(r.output)
+    if (r.code === null || r.code === 126 || r.code === 127) {
+      const why = r.code === null ? 'timed out' : `exit ${r.code}`
+      return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: said ? `${why} — ${said}` : why } }
+    }
+    return { go: false, status: 'skipped', note: { code: 'precheckNo', detail: said ? `exit ${r.code} — ${said}` : `exit ${r.code}` } }
   }
 
   const used = new Set<string>()
@@ -410,6 +450,23 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
       return
     }
 
+    // The precheck decides whether this run goes out at all, so it comes before /clear — and only once the
+    // terminal is free, so what it reports is as fresh as the send that follows.
+    const pendingSince = s.pendingSince
+    if (s.precheck.trim() && memory.checked.get(s.id)?.for !== pendingSince) {
+      const r = await precheck(s.precheck, t.workspaceId)
+      if (r.go) memory.checked.set(s.id, { for: pendingSince, output: r.output })
+      else {
+        record(s, { at: now, status: r.status, note: r.note })
+        s.pendingSince = null
+        s.waitNote = null
+        // A no from the command is an ordinary answer; a command that could not run is worth a notice.
+        if (r.status === 'failed') notices.push({ name: s.name, status: 'failed', note: r.note })
+        log.push(`${s.name}: ${r.status === 'failed' ? 'precheck failed' : 'skipped by precheck'} — ${r.note.detail ?? ''}`)
+        return
+      }
+    }
+
     used.add(t.handle)
     if (s.clearFirst && s.clearedFor !== s.pendingSince) {
       // New conversation — /clear first, the prompt on a later check once the screen settles again.
@@ -431,7 +488,8 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
 
     const late = now - s.pendingSince
-    const r = await send(t.handle, asksReport(s) ? `${s.prompt.trimEnd()} ${words(lang).reportAsk(reportToken(now))}` : s.prompt)
+    const text = fillPrompt(s.prompt, { now, history: s.history, precheck: memory.checked.get(s.id)?.output })
+    const r = await send(t.handle, asksReport(s) ? `${text.trimEnd()} ${words(lang).reportAsk(reportToken(now))}` : text)
     s.pendingSince = null
     s.waitNote = null
     if ('error' in r) {
@@ -462,6 +520,8 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
   }
   // Asked for by hand only until it goes out or is given up — the schedule's next run waits the minute.
   for (const id of memory.asked) if (!list.some((s) => s.id === id && s.pendingSince !== null)) memory.asked.delete(id)
+  // A precheck's answer is for one run — once it went out or was given up, the next run asks again.
+  for (const [id, c] of memory.checked) if (!list.some((s) => s.id === id && s.pendingSince === c.for)) memory.checked.delete(id)
   return { log, notices }
 }
 

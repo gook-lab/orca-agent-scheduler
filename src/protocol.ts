@@ -10,6 +10,8 @@ export type ScheduleDraft = Pick<Schedule, 'name' | 'terminal' | 'cron' | 'promp
   report?: boolean
   /** Send once now (no times) — cron is ignored and the name may be empty. */
   once?: boolean
+  /** Shell command run before sending (Schedule.precheck); left out = none. Not for Send once. */
+  precheck?: string
 }
 
 /** An agent terminal the panel can offer (only the worker can run the Orca CLI). */

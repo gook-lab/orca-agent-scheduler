@@ -48,6 +48,8 @@ export type NoteCode =
   | 'waitedOut'
   | 'notStarted'
   | 'noLine'
+  | 'precheckNo'
+  | 'precheckFailed'
 
 export type Note = { code: NoteCode; reason?: NoteCode; detail?: string }
 
@@ -86,7 +88,9 @@ const en = {
     clearFailed: '/clear failed',
     waitedOut: 'Waited 60 min',
     notStarted: 'Turn start not confirmed',
-    noLine: 'No result line on screen'
+    noLine: 'No result line on screen',
+    precheckNo: 'Precheck said no',
+    precheckFailed: 'Precheck could not run'
   } as Record<NoteCode, string>,
   took: (span: string) => `took ${span}`,
   late: (span: string) => `sent ${span} late`,
@@ -152,6 +156,12 @@ const en = {
     picked: (n: number) => (n === 1 ? '1 date picked' : `${n} dates picked`),
     prompt: 'Prompt',
     promptPlaceholder: 'What the agent in that terminal should do',
+    varsHint: 'Filled in when it goes out: {{date}} {{time}}, {{last_run}} (when the last run went out), {{last_result}} and {{last_link}} (from the last result line), {{precheck}} (what the precheck printed). {{last_result|none}} uses "none" when there is no value.',
+    precheckVarUnset: '{{precheck}} stays empty — no precheck command is set.',
+    precheck: 'Precheck',
+    precheckLabel: 'Command (optional)',
+    precheckPlaceholder: "gh pr list --json number -q '.[].number' | grep .",
+    precheckHint: 'Runs just before the prompt goes out, in the terminal\'s workspace folder, for up to 30 seconds. Exit 0 sends; any other exit skips this run (grey). A command that cannot run (126, 127, time-out) fails the run.',
     create: 'Create schedule',
     save: 'Save',
     cancel: 'Cancel',
@@ -323,7 +333,9 @@ const ko: Words = {
     clearFailed: '대화 비우기(/clear) 실패',
     waitedOut: '60분 기다림',
     notStarted: '시작 미확인',
-    noLine: '화면에 결과 줄이 없음'
+    noLine: '화면에 결과 줄이 없음',
+    precheckNo: '사전 확인에서 건너뜀',
+    precheckFailed: '사전 확인 명령 실패'
   },
   took: (span) => `걸린 시간 ${span}`,
   late: (span) => `${span} 늦게 보냄`,
@@ -388,6 +400,12 @@ const ko: Words = {
     picked: (n) => `${n}일 고름`,
     prompt: '보낼 글',
     promptPlaceholder: '그 터미널의 에이전트에게 시킬 일',
+    varsHint: '보낼 때 채워집니다: {{date}} {{time}}, {{last_run}}(지난 회차를 보낸 때), {{last_result}} · {{last_link}}(지난 결과 줄의 요약 · 링크), {{precheck}}(사전 확인 명령이 출력한 글). {{last_result|없음}} 처럼 쓰면 값이 비었을 때 「없음」이 들어갑니다.',
+    precheckVarUnset: '사전 확인 명령이 없어 {{precheck}} 는 빈 채로 나갑니다.',
+    precheck: '사전 확인',
+    precheckLabel: '명령(선택)',
+    precheckPlaceholder: "gh pr list --json number -q '.[].number' | grep .",
+    precheckHint: '보내기 직전에 그 터미널의 작업 폴더에서 최대 30초 실행합니다. 종료 코드 0 이면 보내고, 다른 코드면 이번 회차를 건너뜁니다(회색). 실행 자체가 안 되면(126 · 127 · 시간 초과) 실패로 남습니다.',
     create: '예약 만들기',
     save: '저장',
     cancel: '취소',

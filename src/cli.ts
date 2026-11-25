@@ -3,7 +3,7 @@
 // both for any workspace — README "Sending".
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { LiveTerminal, SendResult } from './engine'
+import type { CheckResult, LiveTerminal, SendResult } from './engine'
 import { messageOf } from './text'
 
 export type CliResult = { ok: true; result: unknown } | { ok: false; error: string }
@@ -40,6 +40,36 @@ export function cliRunner(bin: string, timeoutMs = 60_000): CliRunner {
         resolve({ ok: false, error: messageOf(error) })
       }
     })
+}
+
+/** A precheck is cut off after this long. */
+export const CHECK_TIMEOUT_MS = 30_000
+
+/** The shell a precheck runs in: the user's login shell on macOS and Linux, so PATH holds what their
+ *  terminal has (Homebrew's gh, for one) — Orca's own process may start with a short PATH. */
+export function shellOf(platform: string, env: Record<string, string | undefined>): [string, string[]] {
+  if (platform === 'win32') return [env.ComSpec || 'cmd.exe', ['/d', '/s', '/c']]
+  return [env.SHELL || '/bin/sh', ['-lc']]
+}
+
+/** Runs a precheck command in `cwd`. Its exit code and what it printed (stdout, else stderr). */
+export function runCheck(command: string, cwd: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
+  const [shell, flags] = shellOf(process.platform, process.env)
+  return new Promise((resolve) => {
+    try {
+      execFile(shell, [...flags, command], { cwd, timeout: timeoutMs, maxBuffer: 1 << 20 }, (error, stdout, stderr) => {
+        const output = String(stdout).trim() || String(stderr).trim()
+        if (!error) return resolve({ code: 0, output })
+        const e = error as Error & { code?: number | string; killed?: boolean }
+        // A number is the exit code; a string is a spawn error (ENOENT: no such shell or folder).
+        if (typeof e.code === 'number') return resolve({ code: e.code, output })
+        if (e.killed || e.code === undefined) return resolve({ code: null, output })
+        resolve({ error: `${e.code}: ${messageOf(error)}` })
+      })
+    } catch (error) {
+      resolve({ error: messageOf(error) })
+    }
+  })
 }
 
 type CliTerminal = {

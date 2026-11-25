@@ -21,6 +21,20 @@ Update with `orca plugin update gook-lab.agent-scheduler`, and remove it with `o
 
 The panel follows Orca's language: Korean when Orca is in Korean, English otherwise. Settings (the gear at the top) can fix it to English or Korean; the status bar and notifications follow.
 
+## Orca Automations — where this plugin differs
+
+Orca has scheduled runs of its own (`orca automations`, Automations in the app). They start an agent for each run — in a new worktree, or in an existing workspace with a fresh or reused session — and suit work that stands on its own. This plugin types into a terminal you already have open, between your own turns:
+
+| | Orca Automations | Agent Scheduler |
+|---|---|---|
+| Where the prompt goes | A session the automation starts (new worktree, or an existing workspace) | A terminal you picked, with its conversation so far |
+| When it goes out | At the set time | At the set time, once that terminal is idle: still screen, empty input box, no dialog (below) |
+| What comes back | The run in Orca's automation history | A one-line result on the card — status, summary, link — and notices |
+| Carrying on from the last run | — | `{{last_result}}`, `{{last_link}}`, `{{last_run}}` in the prompt |
+| A condition first | `--precheck` | **Precheck**, whose output can go into the prompt as `{{precheck}}` |
+
+Use Automations for a job that needs no one's conversation; use this plugin for "every morning, in the terminal where I review PRs, carry on from yesterday".
+
 ## Target — a terminal you pick
 
 A schedule belongs to one terminal you already have open, in any workspace. The terminal list in the form shows only terminals where Orca sees an agent running: the terminal title, then the workspace and the agent. A plain shell is never offered and never sent to. Opened from a terminal line, Edit or Duplicate, the form shows that terminal on one line with **Change**; the list opens only when you press it, and folds again once you pick.
@@ -76,6 +90,37 @@ Sending uses `orca terminal send --terminal=<handle> --text=<prompt> --enter --w
 - The log says how each run ended: `(agent done)`, `(result line)` or `(by screen)` — `orca plugin logs gook-lab.agent-scheduler`.
 - A terminal closed mid-run is Stopped; a run with no end after 6 hours is Timed out.
 
+## Precheck — a command that decides whether to send
+
+A schedule can carry a shell command, under **Precheck** in the form. When the run is due and its terminal is free — every check above has passed — the command runs, then:
+
+| The command | The run |
+|---|---|
+| Exits 0 | Goes out. What the command printed is the value of `{{precheck}}` |
+| Exits with another code | Skipped, in grey like an agent's own skip, with the code and the last line it printed (`Precheck said no: exit 1 — no open pull requests`). No notification |
+| Cannot run — exit 126 or 127 (not found), more than 30 seconds, no shell | Failed, with a notification: a typo is not a no |
+
+- It runs once per run, before `/clear`: a run that clears first does not run it again for the prompt that follows.
+- It runs on this computer, in the terminal's workspace folder when that folder is here; for a workspace on an SSH host or a paired Orca server, in your home folder.
+- The shell is your login shell (`$SHELL -lc`), so `PATH` is the one your terminal has — Orca's own process may start with a shorter one.
+- Send now runs it as well. Send once has none.
+
+For example `gh pr list --search "review-requested:@me" --json number -q '.[].number' | grep .` sends only when a pull request waits for your review, and `Review these pull requests: {{precheck}}` names them.
+
+## Prompt variables — filled in when the run goes out
+
+| Variable | Value |
+|---|---|
+| `{{date}}` · `{{time}}` | The local date (`2026-11-25`) and time (`09:00`) when the prompt goes out |
+| `{{last_run}}` | When the last run of this schedule that went out was sent (`2026-11-24 09:00`) |
+| `{{last_result}}` · `{{last_link}}` | The summary and link of the newest result line — the two from the same run |
+| `{{precheck}}` | What the precheck printed (stdout, else stderr) |
+
+- `{{last_result|nothing yet}}` uses the text after `|` when the value is empty — the first run, or a run whose agent wrote no line.
+- A value goes in as one line: its lines are joined with `; `, since a line break could reach the input box as Enter and send half the prompt. It is cut at 2,000 characters.
+- A name this version does not know stays as typed. The saved prompt keeps its variables; the card shows them unfilled.
+- The result line comes from **Ask for a one-line result** (next section); without it `{{last_result}}` and `{{last_link}}` stay empty.
+
 ## Result — a last line the agent writes
 
 With **Ask for a one-line result** on (the default for a new schedule; off for Send once, under More options), one sentence is added to the end of the prompt:
@@ -120,7 +165,7 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Tabs and search | **Schedules N** and **Terminals N**. Entering Terminals reads the terminal list afresh (the reload button spins meanwhile; what is there stays visible). The search box under them filters both, by terminal title, workspace, agent or schedule name, and opens a folded block that holds a match; a search that hides everything says so with **Clear search** |
 | Schedules | Badges for what is out of the ordinary — waiting, running, need attention — and nothing above the list while every schedule is at rest; then one block per terminal. What runs next is on each card and in Orca's status bar, and the switches say what is on. With nothing scheduled, one line and an **Open Terminals** button |
 | Terminal line | The agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, the terminal's title, then its workspace in grey — the order of the form's terminal list. A block is one terminal with its schedules, not a workspace: the buttons on its line act on that terminal alone. Of the room left for words the shorter of the two keeps its width — the workspace up to a third, the title up to two thirds — and the other takes what is left, ending in … when it runs out. In a block the chevron folds it; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** — one prompt to this terminal only, apart from its schedules — and **New schedule for this terminal** |
-| Schedule in a block | A card on a filled surface with a line around it, folded until it is opened. At its left a round mark for a glance down the list: what is going on now — running ▸, a person must act !, waiting to send … — else how the last run went — ✓ succeeded or done, ✕ failed, – skipped (grey when the agent's result says there was nothing to do, orange when the run waited 60 minutes and never went out), ? stopped at a question — a dot when it has not run yet, and an empty circle when the schedule is off. Folded, one column beside the mark so every line starts at the same edge: the switch with the name; the next run with the time left (`next today 19:13 · in 2h 33m`) and two buttons, send now (▷) and open (⌄); then how the last run went as a word in the mark's colour with when and how long — in seconds under a minute — (in its place a spinner while a run is going, and `Waiting to send` with the reason while one waits — the last run then opens with the card), and under it — when that run failed, timed out, was stopped, ended at a question or never went out — one line of why, cut where it runs out: what the agent wrote, else what the plugin knows (`Waited 60 min: agent is working`, `Send failed: …`) — a schedule that has not run yet ends after two lines. Opened in place: the result as a badge, what the agent wrote and its link when the schedule asks for a result, how the run's end was seen, the rule (with `/clear` when it clears first), the start of the prompt, **Edit**, **Duplicate** and **Delete**, and the history (the newest 30 runs). **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, in the buttons' place, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn says `Waiting to send` and the reason, in the same column; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the next step beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box — and both show on a folded card too |
+| Schedule in a block | A card on a filled surface with a line around it, folded until it is opened. At its left a round mark for a glance down the list: what is going on now — running ▸, a person must act !, waiting to send … — else how the last run went — ✓ succeeded or done, ✕ failed, – skipped (grey when the agent's result says there was nothing to do, orange when the run waited 60 minutes and never went out), ? stopped at a question — a dot when it has not run yet, and an empty circle when the schedule is off. Folded, one column beside the mark so every line starts at the same edge: the switch with the name; the next run with the time left (`next today 19:13 · in 2h 33m`) and two buttons, send now (▷) and open (⌄); then how the last run went as a word in the mark's colour with when and how long — in seconds under a minute — (in its place a spinner while a run is going, and `Waiting to send` with the reason while one waits — the last run then opens with the card), and under it — when that run failed, timed out, was stopped, ended at a question or never went out — one line of why, cut where it runs out: what the agent wrote, else what the plugin knows (`Waited 60 min: agent is working`, `Send failed: …`) — a schedule that has not run yet ends after two lines. Opened in place: the result as a badge, what the agent wrote and its link when the schedule asks for a result, how the run's end was seen, the rule (with `/clear` when it clears first, and the precheck command when there is one), the start of the prompt, **Edit**, **Duplicate** and **Delete**, and the history (the newest 30 runs). **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, in the buttons' place, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn says `Waiting to send` and the reason, in the same column; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the next step beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box — and both show on a folded card too |
 | Sent records | One-off sends are folded under their terminal as `Sent N · last today 12:03`. Ones not sent yet are counted apart — `Waiting to send 1 · Sent 2` — so a send stuck on a closed terminal never reads as sent. A new send opens the group and it stays open when that send ends. A finished one shows its result as a schedule's does — how long it took, why it failed, the summary and link. The newest 20 finished ones are kept |
 | Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). When the worker found no Orca CLI it says that instead, since no terminal could show up. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
 | Settings | Language (same as Orca, English or Korean); **How sending works** — the rule for sending (checked every 30 seconds; nothing new for a minute with an empty input box; skipped after 60 minutes of waiting); Show the introduction again; **What's new**, which opens the release notes; and Import from OrcaCron when that app's schedules are on this computer |
@@ -155,9 +200,9 @@ On a computer where the menubar app [OrcaCron](https://github.com/gook-lab/orca-
 | `agent:read` | Agent status events for the end |
 | `workspace:read` | Workspace names in the terminal menu |
 | `storage:own` | Schedules and the language setting |
-| `notifications:show` | A run that needs a person, one that failed, was stopped, timed out or was skipped after 60 minutes, and one sent late |
+| `notifications:show` | A run that needs a person, one that failed (its precheck included), was stopped, timed out or was skipped after 60 minutes, and one sent late |
 
-Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI. The same access reads `~/.orca-cron/schedules.json` for Import from OrcaCron; the worker reads and writes no other file. The plugin makes no network request of its own; a result link and **What's new** open in your browser only when you press them.
+Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI. The same access reads `~/.orca-cron/schedules.json` for Import from OrcaCron, and runs a schedule's precheck command — one you typed — in your login shell; apart from what that command does, the worker reads and writes no other file. The plugin makes no network request of its own (a precheck such as `gh pr list` makes its own); a result link and **What's new** open in your browser only when you press them.
 
 ## Development — orca plugin test · check
 

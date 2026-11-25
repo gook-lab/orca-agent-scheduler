@@ -3,6 +3,7 @@ import {
   askedSoon,
   asksReport,
   blankSchedule,
+  type CheckResult,
   inspectOnEvent,
   type Io,
   limits,
@@ -32,9 +33,17 @@ function term(over: Partial<LiveTerminal> = {}): LiveTerminal {
 }
 
 /** A fake Orca: open terminals, screens by handle, and what it was sent. */
-function fakeIo(opts: { live?: LiveTerminal[] | null; screens?: Record<string, string[] | null | 'error'>; send?: SendResult } = {}) {
+function fakeIo(
+  opts: { live?: LiveTerminal[] | null; screens?: Record<string, string[] | null | 'error'>; send?: SendResult; check?: CheckResult | 'throw' } = {}
+) {
   const sent: [string, string][] = []
-  const state = { live: opts.live === undefined ? [term()] : opts.live, screens: opts.screens ?? { h1: idle }, send: opts.send ?? { started: true } }
+  const checked: [string, string][] = []
+  const state = {
+    live: opts.live === undefined ? [term()] : opts.live,
+    screens: opts.screens ?? { h1: idle },
+    send: opts.send ?? { started: true },
+    check: opts.check ?? ({ code: 0, output: '' } as CheckResult | 'throw')
+  }
   const io: Io = {
     async read(handle) {
       const s = state.screens[handle]
@@ -48,9 +57,14 @@ function fakeIo(opts: { live?: LiveTerminal[] | null; screens?: Record<string, s
     },
     async terminals() {
       return state.live
+    },
+    async check(command, workspaceId) {
+      checked.push([command, workspaceId])
+      if (state.check === 'throw') throw new Error('spawn failed')
+      return state.check
     }
   }
-  return { io, sent, state }
+  return { io, sent, checked, state }
 }
 
 function sched(over: Partial<Schedule> = {}): Schedule {
@@ -800,4 +814,81 @@ test('a terminal list that throws is a wait, like one that could not be read', a
   assert.deepEqual(s.waitNote, { code: 'cli' })
   assert.ok(r.log.includes('terminal list failed — list broke'))
   assert.deepEqual(f.sent, [])
+})
+
+test('prompt variables are filled in when the run goes out, from the run before it', async () => {
+  const s = sched({
+    nextRunAt: nine,
+    prompt: 'Carry on from {{last_result|nothing yet}} ({{last_link}}) — today {{date}} {{time}}, last {{last_run}}',
+    history: [
+      { at: nine - 60 * min, status: 'skipped', note: { code: 'waitedOut' } },
+      { at: nine - 23 * 60 * min, status: 'success', tookMs: 5 * min, summary: 'Merged 2 PRs', link: 'https://example.com/pr/2' }
+    ]
+  })
+  const f = fakeIo()
+  await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [['h1', 'Carry on from Merged 2 PRs (https://example.com/pr/2) — today 2026-11-13 09:00, last 2026-11-12 09:55']])
+  assert.equal(s.prompt.includes('{{last_result'), true, 'the saved prompt keeps its variables')
+})
+
+test('a precheck that exits 0 lets the run go and its output fills {{precheck}}', async () => {
+  const s = sched({ nextRunAt: nine, prompt: 'Review {{precheck}}', precheck: 'gh pr list' })
+  const f = fakeIo({ check: { code: 0, output: '12\n15\n' } })
+  const memory = newMemory()
+  await tick([s], f.io, memory, nine + 10_000)
+  assert.deepEqual(f.checked, [['gh pr list', 'w1']])
+  assert.deepEqual(f.sent, [['h1', 'Review 12; 15']], 'lines are joined so no line break reaches the input box')
+  assert.equal(memory.checked.size, 0, 'the answer is forgotten once the run went out')
+})
+
+test('a precheck that says no skips the run in grey, with what it printed, and nothing is sent', async () => {
+  const s = sched({ nextRunAt: nine, precheck: 'test -n "$(gh pr list)"' })
+  const f = fakeIo({ check: { code: 1, output: 'no open pull requests' } })
+  const r = await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.sent, [])
+  assert.equal(s.pendingSince, null)
+  assert.equal(s.lastStatus, 'skipped')
+  assert.deepEqual(s.history[0].note, { code: 'precheckNo', detail: 'exit 1 — no open pull requests' })
+  assert.deepEqual(r.notices, [], 'an ordinary answer, no notice')
+  assert.equal(noteText('en', s.history[0].note!), 'Precheck said no: exit 1 — no open pull requests')
+})
+
+test('a precheck that cannot run fails the run with a notice — a typo is not a no', async () => {
+  for (const [check, detail] of [
+    [{ code: 127, output: 'zsh: command not found: ghh' }, 'exit 127 — zsh: command not found: ghh'],
+    [{ code: null, output: '' }, 'timed out'],
+    ['throw', 'spawn failed'],
+    [{ error: 'ENOENT: no such folder' }, 'ENOENT: no such folder']
+  ] as const) {
+    const s = sched({ nextRunAt: nine, precheck: 'ghh pr list' })
+    const f = fakeIo({ check: check as CheckResult | 'throw' })
+    const r = await tick([s], f.io, newMemory(), nine + 10_000)
+    assert.deepEqual(f.sent, [])
+    assert.equal(s.lastStatus, 'failed')
+    assert.deepEqual(s.history[0].note, { code: 'precheckFailed', detail })
+    assert.equal(r.notices.length, 1)
+  }
+})
+
+test('the precheck waits for a free terminal, and runs once for a run that clears first', async () => {
+  const s = sched({ nextRunAt: nine, precheck: 'true', clearFirst: true })
+  const f = fakeIo({ screens: { h1: typing } })
+  const memory = newMemory()
+  await tick([s], f.io, memory, nine + 10_000)
+  assert.deepEqual(f.checked, [], 'not while the terminal is not free')
+  f.state.screens.h1 = idle
+  await tick([s], f.io, memory, nine + 2 * min)
+  assert.deepEqual(f.sent, [['h1', '/clear']])
+  assert.equal(f.checked.length, 1)
+  await tick([s], f.io, memory, nine + 4 * min)
+  assert.deepEqual(f.sent.map(([, t]) => t), ['/clear', 'Plan the day'])
+  assert.equal(f.checked.length, 1, 'not again for the prompt after /clear')
+})
+
+test('a schedule without a precheck runs no command', async () => {
+  const s = sched({ nextRunAt: nine, precheck: '  ' })
+  const f = fakeIo()
+  await tick([s], f.io, newMemory(), nine + 10_000)
+  assert.deepEqual(f.checked, [])
+  assert.equal(f.sent.length, 1)
 })

@@ -46,6 +46,7 @@ import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import { dateKey, dateParts, describe, maxTimes, minuteFromText, zoneText } from './timespec'
 import { messageOf, drawnLength, linkParts, soft } from './text'
+import { usedVars } from './vars'
 
 /** The worker's schedules — asked once, then pushed on every change. */
 const schedules = atom<Schedule[]>([])
@@ -309,7 +310,8 @@ async function save(): Promise<void> {
       prompt: d.prompt,
       enabled: old?.enabled ?? true,
       clearFirst: d.clearFirst,
-      report: d.report
+      report: d.report,
+      ...(d.once ? {} : { precheck: d.precheck })
     })
     closeForm()
     showSaved(saved)
@@ -354,6 +356,9 @@ const statusTone = (status: Schedule['lastStatus']): 'success' | 'danger' | 'war
 /** A run that never went out: its terminal was not free for an hour and the plugin gave it up. `Skipped`
  *  in an agent's result line is the agent's answer — there was nothing to do — and an ordinary result. */
 const missed = (r: Pick<RunRecord, 'status' | 'note'>): boolean => r.status === 'skipped' && r.note?.code === 'waitedOut'
+
+/** A run its precheck command held back — grey like an agent's skip, but a folded card says what the command said. */
+const heldBack = (r: Pick<RunRecord, 'status' | 'note'>): boolean => r.status === 'skipped' && r.note?.code === 'precheckNo'
 
 /** A record's colour. Orange is for a run a person may want to look at — of the skipped ones, the missed
  *  run only: two of four cards stood orange after an ordinary morning (2026-11-18). */
@@ -614,7 +619,7 @@ const wentWrong = (status: RunRecord['status']): boolean =>
   status === 'failed' || status === 'noResult' || status === 'aborted' || status === 'doneWaiting'
 
 /** What the plugin itself knows of a run that did not go well: it never went out, or its end was not seen. */
-const reasonCodes: readonly NoteCode[] = ['waitedOut', 'sendFailed', 'clearFailed', 'closed', 'timeout']
+const reasonCodes: readonly NoteCode[] = ['waitedOut', 'sendFailed', 'clearFailed', 'closed', 'timeout', 'precheckNo', 'precheckFailed']
 
 function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
   const l = read(lang)
@@ -622,7 +627,7 @@ function RecordLine({ r, glance }: { r: RunRecord; glance?: boolean }) {
   // What the agent wrote; when it wrote nothing, what the plugin knows — a run that waited an hour and
   // was given up read, folded, like one an agent skipped.
   const why =
-    glance && (wentWrong(r.status) || missed(r)) ? (r.summary ?? (r.note && reasonCodes.includes(r.note.code) ? noteText(l, r.note) : null)) : null
+    glance && (wentWrong(r.status) || missed(r) || heldBack(r)) ? (r.summary ?? (r.note && reasonCodes.includes(r.note.code) ? noteText(l, r.note) : null)) : null
   const tone = recordTone(r)
   const row = (
     <Box direction="row" align="start" gap="xs">
@@ -814,7 +819,7 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
         <Stack gap="xs">
           <Separator />
           <Text size="xs" muted>
-            {[describe(s.cron, l), s.clearFirst ? '/clear' : ''].filter(Boolean).join(' · ')}
+            {[describe(s.cron, l), s.clearFirst ? '/clear' : '', s.precheck ? `${u.precheck}: ${s.precheck}` : ''].filter(Boolean).join(' · ')}
           </Text>
           <Text size="xs">{soft(promptPreview(s.prompt))}</Text>
           {read(confirmDelete) === s.id ? (
@@ -1361,6 +1366,14 @@ function Form() {
       )}
       <Stack gap="xs">
         <Textarea label={u.prompt} rows={4} value={d.prompt} placeholder={u.promptPlaceholder} onChange={(prompt) => patch({ prompt })} />
+        <Text muted size="xs">
+          {soft(u.varsHint)}
+        </Text>
+        {!d.once && !d.precheck.trim() && usedVars(d.prompt).includes('precheck') ? (
+          <Text size="xs" tone="warning">
+            {soft(u.precheckVarUnset)}
+          </Text>
+        ) : null}
         {d.once ? (
           <Text muted size="xs">
             {u.sendHint}
@@ -1369,6 +1382,16 @@ function Form() {
           reportField
         )}
       </Stack>
+      {d.once ? null : (
+        <Collapsible title={u.precheck} defaultOpen={!!d.precheck.trim()}>
+          <Stack gap="xs">
+            <Input label={u.precheckLabel} value={d.precheck} placeholder={u.precheckPlaceholder} onChange={(precheck) => patch({ precheck })} />
+            <Text muted size="xs">
+              {soft(u.precheckHint)}
+            </Text>
+          </Stack>
+        </Collapsible>
+      )}
       {d.once ? (
         <Collapsible title={u.moreOptions} defaultOpen={!!d.name.trim() || d.report}>
           <Stack gap="sm">

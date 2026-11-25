@@ -2,6 +2,16 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.13.1 — 2026-11-25
+
+A precheck can be tried from the form, and the prompt shows how it will go out.
+
+- **The precheck runs in your login shell, as the README said.** Orca's worker has no `$SHELL`, so 0.13.0 ran the command in `/bin/sh` (seen on Orca 1.4.274: `/bin/sh: ghh: command not found`). It now uses the account's shell (`zsh` on a Mac), as a login shell, so `PATH` is the one your terminal has.
+- **A command that did not exit 0 is told by its error output.** The card's line took what the command printed on stdout first, so `echo checking…; gh pr list` that failed read `checking…`. When the exit is not 0, stderr now comes first; when it is 0, stdout, as `{{precheck}}` wants.
+- **Try it now.** Under the precheck command, a button runs it as a check would — in the picked terminal's workspace folder — and says what the run would do: `Exit 0 — this run would go out (ran in ~/code/toy)`, skipped or failed with the reason, and what it printed. Nothing is sent or saved. An answer about a command goes away when the command is edited.
+- **Prompt preview.** A prompt with variables shows `Goes out as: …` under it, filled from this schedule's history; `{{precheck}}` holds what Try it now printed.
+- **The result option warns about a set reply.** A prompt that asks for a set reply and nothing else can make the agent leave the result line out — Claude Code (Haiku) did, while 0.13.0 was checked. The option's hint says so.
+
 ## 0.13.0 — 2026-11-25
 
 A schedule can pick up where its last run left off, and can ask a command whether to go out at all.

@@ -275,6 +275,22 @@ export type TickResult = { log: string[]; notices: Notice[] }
  *  result ask added to a prompt. */
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+export type PrecheckOutcome = { go: true; output: string } | { go: false; status: 'skipped' | 'failed'; note: Note }
+
+/** What a precheck's ending means for the run — the worker's checks and the form's Try it now share it.
+ *  0 goes; another exit is the command's no and skips the run. A command that could not run says nothing
+ *  about the condition — a typo (126, 127), a time-out, a spawn error — and fails the run instead. */
+export function precheckOutcome(r: CheckResult): PrecheckOutcome {
+  if ('error' in r) return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: r.error } }
+  if (r.code === 0) return { go: true, output: r.output }
+  const said = lastLine(r.output)
+  if (r.code === null || r.code === 126 || r.code === 127) {
+    const why = r.code === null ? 'timed out' : `exit ${r.code}`
+    return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: said ? `${why} — ${said}` : why } }
+  }
+  return { go: false, status: 'skipped', note: { code: 'precheckNo', detail: said ? `exit ${r.code} — ${said}` : `exit ${r.code}` } }
+}
+
 /** The last line a command printed, short enough for a card. */
 const lastLine = (output: string): string => {
   const line = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? ''
@@ -345,26 +361,12 @@ export async function tick(list: Schedule[], io: Io, memory: Memory, now: number
     }
   }
 
-  // 0 goes; another exit is the command's no and skips the run. A command that could not run says nothing
-  // about the condition — a typo (126, 127), a time-out, a spawn error — and fails the run instead.
-  const precheck = async (
-    command: string,
-    workspaceId: string
-  ): Promise<{ go: true; output: string } | { go: false; status: Status; note: Note }> => {
-    let r: CheckResult
+  const precheck = async (command: string, workspaceId: string): Promise<PrecheckOutcome> => {
     try {
-      r = await io.check(command, workspaceId)
+      return precheckOutcome(await io.check(command, workspaceId))
     } catch (error) {
-      r = { error: errorText(error) }
+      return precheckOutcome({ error: errorText(error) })
     }
-    if ('error' in r) return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: r.error } }
-    if (r.code === 0) return { go: true, output: r.output }
-    const said = lastLine(r.output)
-    if (r.code === null || r.code === 126 || r.code === 127) {
-      const why = r.code === null ? 'timed out' : `exit ${r.code}`
-      return { go: false, status: 'failed', note: { code: 'precheckFailed', detail: said ? `${why} — ${said}` : why } }
-    }
-    return { go: false, status: 'skipped', note: { code: 'precheckNo', detail: said ? `exit ${r.code} — ${said}` : `exit ${r.code}` } }
   }
 
   const used = new Set<string>()

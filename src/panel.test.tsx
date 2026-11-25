@@ -15,7 +15,7 @@ const open: TerminalOption[] = [
 /** What a person reads — without the places a long run of letters may break at. */
 const plain = (text: string): string => text.replaceAll('\u200b', '')
 
-type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][]; ran: string[] }
+type Calls = { saved: ScheduleDraft[]; focused: string[]; deleted: string[]; restored: Schedule[]; imported: string[][]; ran: string[]; tried: { command: string; workspaceId: string }[] }
 
 type HostOpts = {
   terminals?: TerminalOption[]
@@ -53,6 +53,19 @@ function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
       'schedules.restore': (input) => {
         calls.restored?.push((input as { schedule: Schedule }).schedule)
         return (input as { schedule: Schedule }).schedule as never
+      },
+      'precheck.try': (input) => {
+        calls.tried?.push(input as { command: string; workspaceId: string })
+        const command = (input as { command: string }).command
+        return {
+          // The test kit's type() adds to what is in the field, so the last command typed decides.
+          result: command.endsWith('ghh pr list')
+            ? { code: 127, output: 'command not found: ghh' }
+            : command.endsWith('exit 1')
+              ? { code: 1, output: 'no open pull requests' }
+              : { code: 0, output: '#12\n#15' },
+          folder: '~/code/toy'
+        } as never
       },
       'orcacron.list': () => app,
       'orcacron.import': (input) => {
@@ -1630,6 +1643,63 @@ test('a run its precheck held back is grey, and the folded card says what the co
   assert.equal(view.find({ type: 'Text', text: 'Skipped' })?.props.tone, 'neutral')
   await unfold(view)
   assert.ok(texts().some((t) => t.endsWith('Precheck: gh pr list | grep .')), 'the opened card shows the command')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('Try it now runs the precheck on the picked terminal\'s workspace and says what the run would do', async () => {
+  const tried: { command: string; workspaceId: string }[] = []
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ tried, saved }) })
+  await view.press({ type: 'IconButton', label: 'New schedule' })
+  await view.toggle(titled(view, 'Collapsible', 'Precheck')!)
+  const button = () => view.find({ type: 'Button', text: 'Try it now' })
+  assert.equal(button()?.props.disabled, true, 'no command, no terminal')
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  assert.ok(texts().includes('Pick a terminal first — the command runs in its workspace folder.'))
+  await view.press({ type: 'ListItem', label: 'Review' })
+  assert.equal(button()?.props.disabled, true, 'still no command')
+  await view.type({ label: 'Command (optional)' }, 'gh pr list')
+  await view.press({ type: 'Button', text: 'Try it now' })
+  assert.deepEqual(tried, [{ command: 'gh pr list', workspaceId: 'w2' }])
+  assert.equal(texts().some((x) => x.startsWith('Goes out as:')), false, 'a prompt without variables has no preview')
+  assert.ok(texts().includes('Exit 0 — this run would go out (ran in ~/code/toy)'))
+  assert.ok(texts().includes('Printed: #12; #15'))
+
+  await view.type({ label: 'Command (optional)' }, 'gh pr list; exit 1')
+  assert.equal(texts().some((x) => x.startsWith('Exit 0')), false, 'an answer about the old command goes when it changes')
+  await view.press({ type: 'Button', text: 'Try it now' })
+  assert.ok(texts().includes('This run would be skipped (ran in ~/code/toy)'))
+  assert.ok(texts().includes('Precheck said no: exit 1 — no open pull requests'))
+
+  await view.type({ label: 'Command (optional)' }, 'ghh pr list')
+  await view.press({ type: 'Button', text: 'Try it now' })
+  assert.ok(texts().includes('This run would fail (ran in ~/code/toy)'))
+  assert.deepEqual(saved, [], 'trying saves nothing')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('a prompt with variables shows how it would go out now — the last result, and the precheck once tried', async () => {
+  const view = await mount(panel, { host: host() })
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'PR review',
+    terminal: { ...open[1] },
+    prompt: 'Carry on from {{last_result|nothing}} with {{precheck}}',
+    precheck: 'gh pr list',
+    report: true,
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: 'success',
+    history: [{ at: Date.now() - 3600_000, status: 'success', tookMs: 60_000, summary: 'Reviewed #9' }]
+  }
+  await view.post('schedules.changed', { schedules: [s] })
+  await unfold(view)
+  await act(view, 'Edit', 0)
+  const preview = () => view.findAll({ type: 'Text' }).map((e) => plain(e.text)).find((x) => x.startsWith('Goes out as:')) ?? null
+  assert.equal(preview(), 'Goes out as: Carry on from Reviewed #9 with (what the precheck prints)')
+  await view.press({ type: 'Button', text: 'Try it now' })
+  assert.equal(preview(), 'Goes out as: Carry on from Reviewed #9 with #12; #15')
   assert.deepEqual(view.errors, [])
   await view.unmount()
 })

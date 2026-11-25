@@ -97,13 +97,14 @@ A schedule can carry a shell command, under **Precheck** in the form. When the r
 | The command | The run |
 |---|---|
 | Exits 0 | Goes out. What the command printed is the value of `{{precheck}}` |
-| Exits with another code | Skipped, in grey like an agent's own skip, with the code and the last line it printed (`Precheck said no: exit 1 — no open pull requests`). No notification |
+| Exits with another code | Skipped, in grey like an agent's own skip, with the code and the last line it printed — its error output first (`Precheck said no: exit 1 — no open pull requests`). No notification |
 | Cannot run — exit 126 or 127 (not found), more than 30 seconds, no shell | Failed, with a notification: a typo is not a no |
 
 - It runs once per run, before `/clear`: a run that clears first does not run it again for the prompt that follows.
 - It runs on this computer, in the terminal's workspace folder when that folder is here; for a workspace on an SSH host or a paired Orca server, in your home folder.
-- The shell is your login shell (`$SHELL -lc`), so `PATH` is the one your terminal has — Orca's own process may start with a shorter one.
+- The shell is your account's login shell, started as a login shell (`zsh -lc` for most), so `PATH` is the one your terminal has. Orca's worker has no `$SHELL` and a shorter `PATH`; without the account's shell the command would run in `/bin/sh`.
 - Send now runs it as well. Send once has none.
+- **Try it now**, under the command, runs it the same way — in the picked terminal's folder — and says what it would do to the run: go out, be skipped or fail, with the folder and what it printed. Nothing is sent and nothing is saved.
 
 For example `gh pr list --search "review-requested:@me" --json number -q '.[].number' | grep .` sends only when a pull request waits for your review, and `Review these pull requests: {{precheck}}` names them.
 
@@ -119,6 +120,7 @@ For example `gh pr list --search "review-requested:@me" --json number -q '.[].nu
 - `{{last_result|nothing yet}}` uses the text after `|` when the value is empty — the first run, or a run whose agent wrote no line.
 - A value goes in as one line: its lines are joined with `; `, since a line break could reach the input box as Enter and send half the prompt. It is cut at 2,000 characters.
 - A name this version does not know stays as typed. The saved prompt keeps its variables; the card shows them unfilled.
+- The form shows the prompt as it would go out now (`Goes out as: …`), from this schedule's history; `{{precheck}}` shows what Try it now printed, or a placeholder until it is tried.
 - The result line comes from **Ask for a one-line result** (next section); without it `{{last_result}}` and `{{last_link}}` stay empty.
 
 ## Result — a last line the agent writes

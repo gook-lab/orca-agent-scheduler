@@ -40,13 +40,13 @@ import {
 } from 'orca'
 import { type Draft, dayModes, draftOf, cronOfDraft, emptyDraft, weekdaysOf } from './draft'
 import { filterGroup, type Group, groupsOf, holds, matches, terminalTexts } from './groups'
-import { needsAttention, type RunRecord, sameTerminal, type Schedule, type TerminalRef } from './engine'
+import { needsAttention, type PrecheckOutcome, precheckOutcome, type RunRecord, sameTerminal, type Schedule, type TerminalRef } from './engine'
 import { type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
 import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import { dateKey, dateParts, describe, maxTimes, minuteFromText, zoneText } from './timespec'
 import { messageOf, drawnLength, linkParts, soft } from './text'
-import { usedVars } from './vars'
+import { fillPrompt, flatten, usedVars } from './vars'
 
 /** The worker's schedules — asked once, then pushed on every change. */
 const schedules = atom<Schedule[]>([])
@@ -110,6 +110,9 @@ const openedDraft = atom('')
 const confirmLeave = atom<'top' | 'bottom' | null>(null)
 const formError = atom<string | null>(null)
 const saving = atom(false)
+/** The form's Try it now — for the command it ran, so an edit to the command hides an answer about the old one. */
+type Tried = { command: string } & ({ running: true } | { running: false; outcome: PrecheckOutcome; folder: string; output: string } | { running: false; error: string })
+const tried = atom<Tried | null>(null)
 
 const thisMonth = (): { y: number; m: number } => {
   const t = new Date()
@@ -203,6 +206,7 @@ function openForm(d: Draft): void {
     set(month, { y, m })
   } else set(month, thisMonth())
   set(formError, null)
+  set(tried, null)
   set(pickerOpen, !d.handle)
   set(openedDraft, JSON.stringify(d))
   set(confirmLeave, null)
@@ -219,8 +223,35 @@ const openSend = (handle = ''): void => openForm({ ...emptyDraft(), once: true, 
 function closeForm(): void {
   set(draft, emptyDraft())
   set(formError, null)
+  set(tried, null)
   set(confirmLeave, null)
   set(formOpen, false)
+}
+
+/** The workspace of the terminal the form has picked — open now, or the saved one while it is closed. */
+function draftWorkspace(d: Draft): string | null {
+  const open = (read(terminals) ?? []).find((t) => t.handle === d.handle)
+  if (open) return open.workspaceId
+  const old = read(schedules).find((s) => s.id === d.id)
+  return old && old.terminal.handle === d.handle ? old.terminal.workspaceId : null
+}
+
+/** Run the precheck now, as a check would, and say what it would do to the run. Nothing is sent. */
+async function tryPrecheck(): Promise<void> {
+  const d = read(draft)
+  const command = d.precheck.trim()
+  const workspaceId = draftWorkspace(d)
+  if (!command || workspaceId === null) return
+  set(tried, { command, running: true })
+  let next: Tried
+  try {
+    const { result, folder } = await plugin.request('precheck.try', { command, workspaceId })
+    next = { command, running: false, outcome: precheckOutcome(result), folder, output: 'error' in result ? '' : result.output }
+  } catch (error) {
+    next = { command, running: false, error: messageOf(error) }
+  }
+  // The form was closed, or the command changed, while it ran — the answer is about something else now.
+  if (read(formOpen) && read(tried)?.command === command) set(tried, next)
 }
 
 /** Back and Cancel — leave at once when nothing changed, otherwise ask next to the button pressed. */
@@ -1266,6 +1297,32 @@ function TerminalPicker({ selected, missing, onPick }: { selected: string; missi
   )
 }
 
+/** What Try it now found: what the run would do, why, and what the command printed. */
+function TriedLine({ t }: { t: Exclude<Tried, { running: true }> }) {
+  const l = read(lang)
+  const u = words(l).ui
+  if ('error' in t) {
+    return (
+      <Text size="xs" tone="danger">
+        {soft(t.error)}
+      </Text>
+    )
+  }
+  const o = t.outcome
+  const printed = flatten(t.output)
+  return (
+    <Stack gap="none">
+      <Text size="xs" weight="medium" tone={o.go ? 'success' : o.status === 'failed' ? 'danger' : 'neutral'}>
+        {soft(o.go ? u.tryGo(t.folder) : o.status === 'failed' ? u.tryFail(t.folder) : u.tryNo(t.folder))}
+      </Text>
+      {o.go ? null : <Text size="xs">{soft(noteText(l, o.note))}</Text>}
+      <Text size="xs" muted>
+        {soft(printed ? u.tryPrinted(printed) : u.tryPrintedNothing)}
+      </Text>
+    </Stack>
+  )
+}
+
 function Form() {
   const l = read(lang)
   const u = words(l).ui
@@ -1299,6 +1356,9 @@ function Form() {
             ? e.prompt
             : null
   const blocked = read(saving) || reason !== null
+  const workspace = d.handle ? draftWorkspace(d) : null
+  // Try it now's answer, while it is about the command in the field.
+  const t = ((x) => (x && x.command === d.precheck.trim() ? x : null))(read(tried))
   const nameField = (
     <Input label={u.name} value={d.name} placeholder={d.once ? u.namePlaceholderOnce : u.namePlaceholder} onChange={(name) => patch({ name })} />
   )
@@ -1369,6 +1429,19 @@ function Form() {
         <Text muted size="xs">
           {soft(u.varsHint)}
         </Text>
+        {usedVars(d.prompt).length > 0 ? (
+          <Text size="xs">
+            {soft(
+              u.preview(
+                fillPrompt(d.prompt, {
+                  now: read(now),
+                  history: old?.history ?? [],
+                  precheck: (t && !t.running && 'outcome' in t && t.outcome.go ? t.outcome.output : '') || u.previewPrecheck
+                })
+              )
+            )}
+          </Text>
+        ) : null}
         {!d.once && !d.precheck.trim() && usedVars(d.prompt).includes('precheck') ? (
           <Text size="xs" tone="warning">
             {soft(u.precheckVarUnset)}
@@ -1389,6 +1462,15 @@ function Form() {
             <Text muted size="xs">
               {soft(u.precheckHint)}
             </Text>
+            <Row gap="xs">
+              <Button size="xs" variant="outline" disabled={!d.precheck.trim() || workspace === null || t?.running === true} onPress={() => void tryPrecheck()}>
+                {t?.running ? u.tryRunning : u.tryPrecheck}
+              </Button>
+            </Row>
+            <Text muted size="xs">
+              {workspace === null ? u.tryPrecheckNoTerminal : u.tryPrecheckHint}
+            </Text>
+            {t && !t.running ? <TriedLine t={t} /> : null}
           </Stack>
         </Collapsible>
       )}

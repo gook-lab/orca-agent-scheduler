@@ -4,11 +4,12 @@
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { type CliRunner, cliRunner, findCli, holdAgents, sendArgs, sentFrom, terminalsFrom } from './cli'
+import { type CliRunner, cliRunner, findCli, holdAgents, runCheck, sendArgs, sentFrom, terminalsFrom } from './cli'
 import {
   askedSoon,
   blankSchedule,
   blankTerminal,
+  type CheckResult,
   inspectOnEvent,
   type Io,
   limits,
@@ -103,6 +104,7 @@ export function normalize(value: unknown): Schedule[] {
         clearFirst: v.clearFirst === true,
         report: v.report === true,
         once: v.once === true,
+        precheck: text(v.precheck),
         nextRunAt: time(v.nextRunAt),
         pendingSince: time(v.pendingSince),
         waitNote: isNote(v.waitNote) ? v.waitNote : null,
@@ -133,6 +135,9 @@ const ORCA_CRON_MAX_BYTES = 5_000_000
 /** Where OrcaCron keeps its data, and how a file there is read (null = not there). Tests swap these.
  *  Only a plain file is read: the read is synchronous, and on a pipe it would never return — every
  *  check and every panel request would wait behind it. */
+/** How a precheck command is run (src/cli.ts runCheck). Tests swap in a fake. */
+export const checks: { run: (command: string, cwd: string) => Promise<CheckResult> } = { run: (command, cwd) => runCheck(command, cwd) }
+
 export const orcaCron: { dir: () => string; read: (path: string) => string | null } = {
   dir: () => process.env.ORCA_CRON_HOME || `${homedir()}/.orca-cron`,
   read: (path) => {
@@ -186,7 +191,23 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       const list = terminalsFrom(await run(['terminal', 'list']))
       // Read at least once a check, so two checks cover the last time the agent was seen.
       return list && holdAgents(list, seenAgents, Date.now(), 2 * TICK_MS)
+    },
+    async check(command, workspaceId) {
+      return checks.run(command, await folderOf(workspaceId))
     }
+  }
+
+  /** The workspace's folder when it is on this computer; else the home folder. A workspace on an SSH host
+   *  or a paired Orca server has its folder there, and the command runs here. */
+  const folderOf = async (workspaceId: string): Promise<string> => {
+    try {
+      const { workspaces } = await orca.host.call('workspace.list')
+      const w = workspaces.find((x) => x.id === workspaceId)
+      if (w?.path && (w.hostId === null || w.hostId === 'local') && statSync(w.path, { throwIfNoEntry: false })?.isDirectory()) return w.path
+    } catch {
+      // the home folder, as below
+    }
+    return homedir()
   }
 
   const noticeText = (n: Notice): string => {
@@ -401,7 +422,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         prompt,
         enabled: draft.enabled !== false,
         clearFirst: draft.clearFirst === true,
-        report: draft.report === true
+        report: draft.report === true,
+        precheck: text(draft.precheck).trim()
       }
       // A /clear typed into the old terminal says nothing about the new one.
       if (moved) s.clearedFor = null

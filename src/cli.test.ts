@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { cliRunner, findCli, holdAgents, parseCli, sendArgs, sentFrom, terminalsFrom } from './cli'
+import { cliRunner, findCli, holdAgents, parseCli, runCheck, sendArgs, sentFrom, shellOf, terminalsFrom } from './cli'
 import type { LiveTerminal } from './engine'
 
 test('실행 중인 Orca 앱 안의 CLI 를 찾는다 — PATH 의 다른 판 대신', () => {
@@ -89,4 +89,21 @@ test('a call the system will not start is a failed call, not a rejected promise'
   const r = await cliRunner('/bin/echo')(['terminal', 'send', '--text=a\0b'])
   assert.equal(r.ok, false)
   assert.match((r as { error: string }).error, /null bytes/)
+})
+
+test('사전 확인 셸 — macOS · Linux 는 로그인 셸, Windows 는 cmd', () => {
+  assert.deepEqual(shellOf('darwin', { SHELL: '/bin/zsh' }), ['/bin/zsh', ['-lc']])
+  assert.deepEqual(shellOf('linux', {}), ['/bin/sh', ['-lc']])
+  assert.deepEqual(shellOf('win32', {}), ['cmd.exe', ['/d', '/s', '/c']])
+})
+
+test('사전 확인 실행 — 종료 코드 · 출력 · 작업 폴더 · 시간 초과를 그대로 돌려준다', async () => {
+  assert.deepEqual(await runCheck('pwd', '/'), { code: 0, output: '/' })
+  assert.deepEqual(await runCheck('echo no >&2; exit 3', '/'), { code: 3, output: 'no' })
+  const missing = await runCheck('definitely-not-a-command-xyz', '/')
+  assert.ok('code' in missing && missing.code === 127)
+  const slow = await runCheck('sleep 5', '/', 300)
+  assert.ok('code' in slow && slow.code === null, '끊긴 명령은 code null')
+  const nowhere = await runCheck('true', '/no/such/folder')
+  assert.ok('error' in nowhere, '없는 폴더는 실행 오류')
 })

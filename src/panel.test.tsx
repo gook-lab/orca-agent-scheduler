@@ -1572,3 +1572,64 @@ test('while a run waits to be sent, a folded card says that in place of the last
   assert.deepEqual([...lastRun(), waits()], [true, true, true, false], 'the wait over, the last run is back')
   await view.unmount()
 })
+
+test('a precheck is typed under its own fold, saved with the schedule, and reopens open; Send once has none', async () => {
+  const saved: ScheduleDraft[] = []
+  const view = await mount(panel, { host: host({ saved }) })
+  await fillBasics(view)
+  assert.equal(view.find({ label: 'Command (optional)' }), null, 'folded while empty')
+  await view.toggle(titled(view, 'Collapsible', 'Precheck')!)
+  await view.type({ label: 'Command (optional)' }, 'gh pr list | grep .')
+  await view.press({ text: 'Create schedule' })
+  assert.equal(saved[0].precheck, 'gh pr list | grep .')
+
+  await fillBasics(view)
+  await view.press({ text: 'Create schedule' })
+  assert.equal(saved[1].precheck, '', 'none unless typed')
+
+  await view.press({ type: 'IconButton', label: 'Send once' })
+  assert.equal(titled(view, 'Collapsible', 'Precheck'), null)
+  await view.press({ type: 'ListItem', label: 'Review' })
+  await view.type({ label: 'Prompt' }, 'Summarise the open PRs')
+  await view.press({ text: 'Send' })
+  assert.equal('precheck' in saved[2], false)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('the form lists the prompt variables, and warns when {{precheck}} has no command to fill it', async () => {
+  const view = await mount(panel, { host: host() })
+  await fillBasics(view)
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text).startsWith('Filled in when it goes out: {{date}} {{time}}')))
+  const warning = () => view.findAll({ type: 'Text' }).find((e) => plain(e.text).includes('no precheck command is set')) ?? null
+  assert.equal(warning(), null)
+  await view.type({ label: 'Prompt' }, 'Review {{precheck}}')
+  assert.ok(warning())
+  await view.toggle(titled(view, 'Collapsible', 'Precheck')!)
+  await view.type({ label: 'Command (optional)' }, 'gh pr list')
+  assert.equal(warning(), null)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('a run its precheck held back is grey, and the folded card says what the command said', async () => {
+  const view = await mount(panel, { host: host() })
+  const s: Schedule = {
+    ...blankSchedule('s1'),
+    name: 'PR review',
+    terminal: { ...open[0] },
+    prompt: 'Review',
+    precheck: 'gh pr list | grep .',
+    nextRunAt: Date.now() + 3600_000,
+    lastStatus: 'skipped',
+    history: [{ at: Date.now() - 60_000, status: 'skipped', note: { code: 'precheckNo', detail: 'exit 1' } }]
+  }
+  await view.post('schedules.changed', { schedules: [s] })
+  const texts = (): string[] => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  assert.ok(texts().includes('Precheck said no: exit 1'))
+  assert.equal(view.find({ type: 'Text', text: 'Skipped' })?.props.tone, 'neutral')
+  await unfold(view)
+  assert.ok(texts().some((t) => t.endsWith('Precheck: gh pr list | grep .')), 'the opened card shows the command')
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})

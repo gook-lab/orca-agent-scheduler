@@ -18,6 +18,7 @@ const base = {
   clearFirst: false,
   report: false,
   once: false,
+  precheck: '',
   pendingSince: null,
   waitNote: null,
   clearedFor: null,

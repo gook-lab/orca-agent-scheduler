@@ -57,10 +57,12 @@ const sentText = (calls: string[][]): string[] => calls.filter((c) => c[1] === '
 
 // A failed assertion skips the test's own deactivate — stop the 30-second timer anyway, or Node never exits.
 const realOrcaCron = { ...main.orcaCron }
+const realChecks = { ...main.checks }
 afterEach(() => {
   main.deactivate()
   main.cli.run = null
   Object.assign(main.orcaCron, realOrcaCron)
+  Object.assign(main.checks, realChecks)
 })
 
 test('saving fills the next run, stores it and tells the panel', async () => {
@@ -854,4 +856,64 @@ test('checks do not pile up behind a CLI call that hangs: one runs, one waits', 
   } finally {
     mock.timers.reset()
   }
+})
+
+test('a precheck is saved with the schedule, runs in the workspace folder on this computer, and fills {{precheck}}', async () => {
+  const calls = fakeCli()
+  const ran: [string, string][] = []
+  main.checks.run = async (command, cwd) => (ran.push([command, cwd]), { code: 0, output: '#12\n#15' })
+  const h = mockHost({
+    results: {
+      'workspace.list': {
+        workspaces: [
+          { id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/tmp', branch: 'main', hostId: 'local' },
+          { id: 'w2', kind: 'worktree', name: 'remote', path: '/tmp', branch: 'main', hostId: 'ssh:box' }
+        ],
+        truncated: false
+      },
+      'terminal.read': { lines: idle, truncated: false },
+      'statusBar.update': { ok: true },
+      'notifications.show': { delivered: true }
+    }
+  })
+  const worker = await mountWorker(main, { host: h })
+  const s = (await worker.request('schedules.save', { ...draft, prompt: 'Review {{precheck}}', precheck: '  gh pr list  ' })) as Schedule
+  assert.equal(s.precheck, 'gh pr list', 'trimmed')
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.deepEqual(ran, [['gh pr list', '/tmp']])
+  assert.deepEqual(sentText(calls), ['Review #12; #15'])
+  await worker.deactivate()
+})
+
+test('a precheck for a workspace that is not on this computer runs in the home folder', async () => {
+  fakeCli({
+    list: {
+      ok: true,
+      result: { terminals: [{ handle: 'h1', title: 'Morning', agentIdentity: 'claude', worktreeId: 'w2', tabId: 't1', leafId: 'l1', lastOutputAt: old, writable: true }] }
+    }
+  })
+  const ran: string[] = []
+  main.checks.run = async (_command, cwd) => (ran.push(cwd), { code: 1, output: '' })
+  const h = mockHost({
+    results: {
+      'workspace.list': { workspaces: [{ id: 'w2', kind: 'worktree', name: 'remote', path: '/tmp', branch: 'main', hostId: 'ssh:box' }], truncated: false },
+      'terminal.read': { lines: idle, truncated: false },
+      'statusBar.update': { ok: true }
+    }
+  })
+  const worker = await mountWorker(main, { host: h })
+  const s = (await worker.request('schedules.save', { ...draft, terminal: { ...terminal, workspaceId: 'w2' }, precheck: 'true' })) as Schedule
+  await worker.request('schedules.runNow', { id: s.id })
+  await settle()
+  assert.equal(ran.length, 1)
+  assert.notEqual(ran[0], '/tmp')
+  const stored = (h.data().storage.schedules as Schedule[])[0]
+  assert.equal(stored.lastStatus, 'skipped')
+  await worker.deactivate()
+})
+
+test('schedules stored before the precheck load without one', () => {
+  assert.equal(main.normalize([{ id: 's1', name: 'Old', prompt: 'x' }])[0].precheck, '')
+  assert.equal(main.normalize([{ id: 's1', precheck: 3 }])[0].precheck, '')
 })

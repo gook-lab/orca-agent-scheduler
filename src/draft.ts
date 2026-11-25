@@ -29,6 +29,8 @@ export type Draft = {
   to: string
   cron: string
   prompt: string
+  /** Shell command run before sending; '' = none. */
+  precheck: string
 }
 
 export const emptyDraft = (): Draft => ({
@@ -47,7 +49,8 @@ export const emptyDraft = (): Draft => ({
   from: '09:00',
   to: '18:00',
   cron: '0 9 * * 1-5',
-  prompt: ''
+  prompt: '',
+  precheck: ''
 })
 
 export const weekdaysOf: Record<'everyDay' | 'weekdays' | 'weekends', number[]> = {
@@ -120,5 +123,6 @@ export const draftOf = (s: Schedule): Draft => ({
   handle: s.terminal.handle,
   clearFirst: s.clearFirst,
   report: s.report,
-  prompt: s.prompt
+  prompt: s.prompt,
+  precheck: s.precheck
 })

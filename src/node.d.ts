@@ -3,14 +3,14 @@ declare module 'node:child_process' {
   export function execFile(
     file: string,
     args: readonly string[],
-    options: { timeout?: number; maxBuffer?: number },
+    options: { timeout?: number; maxBuffer?: number; cwd?: string },
     callback: (error: (Error & { code?: number | string }) | null, stdout: string, stderr: string) => void
   ): unknown
 }
 
 declare module 'node:fs' {
   export function existsSync(path: string): boolean
-  export function statSync(path: string, options: { throwIfNoEntry: false }): { isFile(): boolean; size: number } | undefined
+  export function statSync(path: string, options: { throwIfNoEntry: false }): { isFile(): boolean; isDirectory(): boolean; size: number } | undefined
   export function readFileSync(path: string, encoding: 'utf8'): string
 }
 
@@ -18,7 +18,7 @@ declare module 'node:os' {
   export function homedir(): string
 }
 
-declare const process: { execPath: string; env: Record<string, string | undefined> }
+declare const process: { execPath: string; platform: string; env: Record<string, string | undefined> }
 
 declare module 'node:test' {
   /** Fake timers — the one part a test here uses, to fire the worker's 30-second timer by hand. */

@@ -3,6 +3,7 @@
 // both for any workspace — README "Sending".
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { userInfo } from 'node:os'
 import type { CheckResult, LiveTerminal, SendResult } from './engine'
 import { messageOf } from './text'
 
@@ -46,20 +47,33 @@ export function cliRunner(bin: string, timeoutMs = 60_000): CliRunner {
 export const CHECK_TIMEOUT_MS = 30_000
 
 /** The shell a precheck runs in: the user's login shell on macOS and Linux, so PATH holds what their
- *  terminal has (Homebrew's gh, for one) — Orca's own process may start with a short PATH. */
-export function shellOf(platform: string, env: Record<string, string | undefined>): [string, string[]] {
+ *  terminal has (Homebrew's gh, for one) — Orca's own process may start with a short PATH. The worker has
+ *  no $SHELL (Orca 1.4.274: the command ran in /bin/sh), so the account's shell stands in for it. */
+export function shellOf(platform: string, env: Record<string, string | undefined>, account: string | null = null): [string, string[]] {
   if (platform === 'win32') return [env.ComSpec || 'cmd.exe', ['/d', '/s', '/c']]
-  return [env.SHELL || '/bin/sh', ['-lc']]
+  return [env.SHELL || account || '/bin/sh', ['-lc']]
 }
 
-/** Runs a precheck command in `cwd`. Its exit code and what it printed (stdout, else stderr). */
+/** The account's login shell, or null when the system will not say. */
+function accountShell(): string | null {
+  try {
+    return userInfo().shell || null
+  } catch {
+    return null
+  }
+}
+
+/** Runs a precheck command in `cwd`. Its exit code and what it printed: stdout, else stderr — the other way
+ *  round when it did not exit 0, where the error says more than what came before it. */
 export function runCheck(command: string, cwd: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
-  const [shell, flags] = shellOf(process.platform, process.env)
+  const [shell, flags] = shellOf(process.platform, process.env, accountShell())
   return new Promise((resolve) => {
     try {
       execFile(shell, [...flags, command], { cwd, timeout: timeoutMs, maxBuffer: 1 << 20 }, (error, stdout, stderr) => {
-        const output = String(stdout).trim() || String(stderr).trim()
-        if (!error) return resolve({ code: 0, output })
+        const out = String(stdout).trim()
+        const err = String(stderr).trim()
+        if (!error) return resolve({ code: 0, output: out || err })
+        const output = err || out
         const e = error as Error & { code?: number | string; killed?: boolean }
         // A number is the exit code; a string is a spawn error (ENOENT: no such shell or folder).
         if (typeof e.code === 'number') return resolve({ code: e.code, output })

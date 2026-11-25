@@ -917,3 +917,25 @@ test('schedules stored before the precheck load without one', () => {
   assert.equal(main.normalize([{ id: 's1', name: 'Old', prompt: 'x' }])[0].precheck, '')
   assert.equal(main.normalize([{ id: 's1', precheck: 3 }])[0].precheck, '')
 })
+
+test('Try it now runs the precheck in the workspace folder, sends nothing, and refuses an empty command', async () => {
+  const calls = fakeCli()
+  const ran: [string, string][] = []
+  main.checks.run = async (command, cwd) => (ran.push([command, cwd]), { code: 1, output: 'nothing to review' })
+  const h = mockHost({
+    results: {
+      'workspace.list': { workspaces: [{ id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/tmp', branch: 'main', hostId: null }], truncated: false },
+      'statusBar.update': { ok: true }
+    }
+  })
+  const worker = await mountWorker(main, { host: h })
+  const r = (await worker.request('precheck.try', { command: ' gh pr list ', workspaceId: 'w1' })) as { result: unknown; folder: string }
+  assert.deepEqual(r, { result: { code: 1, output: 'nothing to review' }, folder: '/tmp' })
+  assert.deepEqual(ran, [['gh pr list', '/tmp']])
+  const home = (await worker.request('precheck.try', { command: 'true', workspaceId: 'nowhere' })) as { folder: string }
+  assert.equal(home.folder, '~', 'an unknown workspace runs in the home folder, shown as ~')
+  await assert.rejects(() => worker.request('precheck.try', { command: '  ', workspaceId: 'w1' }))
+  assert.deepEqual(sentText(calls), [])
+  assert.equal(h.data().storage.schedules, undefined, 'nothing stored')
+  await worker.deactivate()
+})

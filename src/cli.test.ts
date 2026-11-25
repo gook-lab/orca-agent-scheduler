@@ -94,12 +94,16 @@ test('a call the system will not start is a failed call, not a rejected promise'
 test('사전 확인 셸 — macOS · Linux 는 로그인 셸, Windows 는 cmd', () => {
   assert.deepEqual(shellOf('darwin', { SHELL: '/bin/zsh' }), ['/bin/zsh', ['-lc']])
   assert.deepEqual(shellOf('linux', {}), ['/bin/sh', ['-lc']])
+  assert.deepEqual(shellOf('darwin', {}, '/bin/zsh'), ['/bin/zsh', ['-lc']], 'no $SHELL (Orca\'s worker) — the account\'s shell')
+  assert.deepEqual(shellOf('darwin', { SHELL: '/opt/homebrew/bin/fish' }, '/bin/zsh'), ['/opt/homebrew/bin/fish', ['-lc']])
   assert.deepEqual(shellOf('win32', {}), ['cmd.exe', ['/d', '/s', '/c']])
 })
 
 test('사전 확인 실행 — 종료 코드 · 출력 · 작업 폴더 · 시간 초과를 그대로 돌려준다', async () => {
   assert.deepEqual(await runCheck('pwd', '/'), { code: 0, output: '/' })
   assert.deepEqual(await runCheck('echo no >&2; exit 3', '/'), { code: 3, output: 'no' })
+  assert.deepEqual(await runCheck('echo before; echo broke >&2; exit 2', '/'), { code: 2, output: 'broke' }, '실패면 오류 출력이 먼저')
+  assert.deepEqual(await runCheck('echo fine; echo warn >&2', '/'), { code: 0, output: 'fine' }, '성공이면 표준 출력이 먼저')
   const missing = await runCheck('definitely-not-a-command-xyz', '/')
   assert.ok('code' in missing && missing.code === 127)
   const slow = await runCheck('sleep 5', '/', 300)

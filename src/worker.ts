@@ -483,6 +483,21 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   orca.panels.handle('runner.status', () => status)
 
+  // Not lined up behind the checks: it changes nothing, and a slow command would hold every edit for as long.
+  orca.panels.handle('precheck.try', async (given) => {
+    const input = (typeof given === 'object' && given !== null ? given : {}) as { command?: unknown; workspaceId?: unknown }
+    const command = text(input.command).trim()
+    if (!command) throw invalid(words(lang).error.precheck)
+    const folder = await folderOf(text(input.workspaceId))
+    let result: CheckResult
+    try {
+      result = await checks.run(command, folder)
+    } catch (error) {
+      result = { error: messageOf(error) }
+    }
+    return { result, folder: folder === homedir() || folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder }
+  })
+
   /** OrcaCron's schedules with their terminals matched to the ones open now. */
   const importable = async (): Promise<{ list: ImportList; items: ReturnType<typeof itemsFrom>; open: TerminalOption[] }> => {
     const dir = orcaCron.dir()

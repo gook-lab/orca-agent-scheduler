@@ -1,5 +1,5 @@
 // Panel ↔ worker contract. Read by both src/panel.tsx and src/worker.ts.
-import type { Schedule, TerminalRef } from './engine'
+import type { CheckResult, Schedule, TerminalRef } from './engine'
 
 export {}
 
@@ -60,6 +60,9 @@ declare module 'orca' {
     /** Bring Orca to that terminal's tab (`orca terminal switch`). */
     'terminals.focus': { input: { handle: string }; output: { ok: boolean } }
     'runner.status': { output: RunnerStatus }
+    /** Run a precheck command now, as a check would, without sending anything (the form's Try it now).
+     *  `folder` is where it ran, with the home folder as `~`. */
+    'precheck.try': { input: { command: string; workspaceId: string }; output: { result: CheckResult; folder: string } }
     /** What OrcaCron has to bring over. */
     'orcacron.list': { output: ImportList }
     /** Copy those over, switched off; ones already here or not importable are passed by. */

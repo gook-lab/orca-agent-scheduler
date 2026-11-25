@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "agent-scheduler",
   "name": "Agent Scheduler",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times — every day, on weekdays, on picked days or dates, or every N minutes. It waits until the terminal is idle, can ask a command first whether to send, fills in the last run's result, sends through the Orca CLI, and records when the agent finishes, with a one-line result if you ask for one. English and Korean. macOS only for now.",
   "author": {
     "name": "gook-lab",

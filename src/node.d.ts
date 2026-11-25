@@ -16,6 +16,7 @@ declare module 'node:fs' {
 
 declare module 'node:os' {
   export function homedir(): string
+  export function userInfo(): { shell: string | null }
 }
 
 declare const process: { execPath: string; platform: string; env: Record<string, string | undefined> }

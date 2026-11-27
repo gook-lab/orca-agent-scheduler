@@ -227,7 +227,7 @@ Any name ending in `.json`; the `id` inside is what counts.
 | `target` | `workspace` and `agent` — below. `title` is optional |
 | `newConversation` | **Start a new conversation** (`/clear` first). Left out = off |
 | `askResult` | **Ask for a one-line result**. Left out = on, as for a new schedule in the form |
-| `enabled` | Left out = on. `false` brings it in switched off, for a person to turn on |
+| `enabled` | Left out = on: a schedule from the inbox arrives switched on and runs at its next time, unlike one imported from OrcaCron. `false` brings it in switched off, for a person to turn on |
 
 To remove the schedule, write `{ "id": "orca-bot:auto_7f3a", "deleted": true }` under the same or another name. Deleting the file does nothing: the schedule stays, and is no longer updated.
 
@@ -241,12 +241,12 @@ The writer has no terminal to point at, so it says where the work belongs:
 
 | Field | Value |
 |---|---|
-| `workspace` | The workspace's folder (`~` allowed), a folder inside it — the deepest workspace that holds it counts — or the Orca workspace id |
+| `workspace` | The workspace's folder (`~` allowed), a folder inside it — the deepest workspace that holds it counts — or the Orca workspace id, as `orca worktree list` or the plugin API gives it |
 | `agent` | `claude`, `codex` or `gemini` |
-| `title` | Optional: only the terminal with this title (letter case aside) |
+| `title` | Optional: only the terminal with this title (letter case aside) — the title on the terminal's line in this panel, which is the one the agent sets and changes as it works, not the name of the tab |
 
 - Exactly one open terminal in that workspace runs that agent: the schedule goes on it, as if picked in the form.
-- None, or more than one: the schedule arrives without a terminal. Its card says so in orange — `No Claude Code terminal to send to in app` — with **Pick a terminal**, and a run that falls due waits like one whose terminal was closed (skipped after 60 minutes). Between two terminals nothing is guessed: with `newConversation` a wrong guess would erase a conversation.
+- None, or more than one: the schedule arrives without a terminal. Its card says so in orange — `No single Claude Code terminal to send to in app (none open, or several)` — with **Pick a terminal**, and a run that falls due waits like one whose terminal was closed (skipped after 60 minutes). Between two terminals nothing is guessed: with `newConversation` a wrong guess would erase a conversation.
 - A schedule without a terminal is matched again at every check, and takes the terminal once exactly one fits — start `claude` in that workspace and it goes there by itself.
 - Once it has a terminal — matched or picked — it keeps it like any other schedule. The target is looked at again only when the writer changes it.
 
@@ -289,7 +289,7 @@ cat > "$f.tmp" < schedule.json && mv "$f.tmp" "$f.json"
 ```
 
 - When the automation is edited, write the file again with the same `id`; when it is removed, write `{ "id": "orca-automation:d42233f8-…", "deleted": true }`.
-- An automation starts its own session, and this schedule types into your terminal: with both on, the work is done twice. Keep one on — create the automation with `--disabled`, or put `"enabled": false` in the file and let the person choose.
+- The bot turns off its own automation for the same job once it has written the file (`orca automations edit <id> --disabled`). An automation starts its own session and this schedule types into your terminal: with both on, the work is done twice. The schedule arrives switched on, so the one to turn off is the automation, and that is the bot's to do — the plugin does not touch automations.
 - Without this plugin the file is never read and changes nothing, so a bot may write it either way.
 
 Up to 200 files are read, in name order, each up to 256 KB; only plain files are opened.

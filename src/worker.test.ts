@@ -42,7 +42,11 @@ function host(storage: Record<string, unknown> = {}, lines: string[] = idle) {
     storage: storage as never,
     results: {
       'workspace.list': {
-        workspaces: [{ id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/repo/docs', branch: 'main', hostId: null }],
+        workspaces: [
+          { id: 'w1', kind: 'worktree', name: 'acme_notes', path: '/repo/docs', branch: 'main', hostId: null },
+          // A worktree as Orca 1.4.278 lists it: not the id its terminals carry (`repo::/x/toy`), the same folder.
+          { id: 'identity:wt2:local:toy', kind: 'worktree', name: 'main', path: '/x/toy', branch: 'main', hostId: 'local' }
+        ],
         truncated: false
       },
       'terminal.read': { lines, truncated: false },
@@ -985,7 +989,7 @@ test('inbox — a file dropped in the folder is a schedule at the next check, on
       [inboxId(dropped.id), dropped.name, dropped.cron, dropped.prompt, true, false, true, { id: dropped.id, by: 'Orca bot' }]
     )
     assert.deepEqual(s.terminal, terminal, 'the one Claude Code terminal of the workspace at /repo/docs')
-    assert.ok(s.nextRunAt && s.nextRunAt > Date.now())
+    assert.ok(s.nextRunAt && s.nextRunAt > Date.now(), 'switched on without the file saying so — its next run is set')
     assert.ok(worker.posts.some((p) => p.event === 'schedules.changed' && (p.payload as { schedules: Schedule[] }).schedules.length === 1), 'the panel hears of it')
     assert.deepEqual(
       (h.callsOf('notifications.show') as { body: string }[]).map((n) => n.body),
@@ -996,6 +1000,10 @@ test('inbox — a file dropped in the folder is a schedule at the next check, on
     await nextCheck()
     assert.equal(schedulesOf(h).length, 1, 'the file stays where it is and adds nothing more')
     assert.equal(h.callsOf('notifications.show').length, 1)
+    // A worktree: the host lists it under another id than its terminals carry, so its folder finds them.
+    files['toy.json'] = { ...dropped, id: 'toy', target: { workspace: '/x/toy', agent: 'codex' } }
+    await nextCheck()
+    assert.deepEqual(schedulesOf(h)[1].terminal, { handle: 'h2', title: 'Review', agent: 'codex', workspaceId: 'repo::/x/toy', workspace: 'toy', tabId: 't2', leafId: 'l2' })
     assert.deepEqual(worker.refusals, [])
   })
 })
@@ -1009,7 +1017,7 @@ test('inbox — with no terminal to match, the schedule waits for a person to pi
   const h = host()
   await checked(h, async (worker, nextCheck) => {
     const [s] = schedulesOf(h)
-    assert.deepEqual(s.terminal, { handle: '', title: '', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: '', leafId: '' })
+    assert.deepEqual(s.terminal, { handle: '', title: '', agent: 'claude', workspaceId: 'w1', workspace: 'docs', tabId: '', leafId: '' }, 'named by its folder until a terminal says more')
     // Its time comes with still no terminal: the wait the card answers with "Pick a terminal".
     await worker.request('schedules.runNow', { id: s.id })
     await settle()

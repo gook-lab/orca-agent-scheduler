@@ -321,7 +321,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         if (places) return places
         let workspaces: Places['workspaces'] = []
         try {
-          workspaces = (await orca.host.call('workspace.list')).workspaces.map((w) => ({ id: w.id, name: w.name, path: w.path }))
+          workspaces = (await orca.host.call('workspace.list')).workspaces.map((w) => ({ id: w.id, kind: w.kind, name: w.name, path: w.path }))
         } catch {
           // no workspace is known, so no terminal fits — the schedule waits for one, or for a person
         }

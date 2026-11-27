@@ -8,7 +8,7 @@ import { agentKind } from './screen'
 
 /** Where the prompt should go: a workspace and an agent, since the writer has no terminal to point at. */
 export type Target = {
-  /** The workspace's folder (or a folder inside it), or its Orca workspace id. */
+  /** The workspace's folder (or a folder inside it), or its Orca id — the CLI's or the host's. */
   workspace: string
   /** claude · codex · gemini. */
   agent: string
@@ -41,7 +41,10 @@ export type Entry = { file: string } & ({ item: Item } | { remove: string } | { 
 /** The last thing applied per item id: the item, or that it was deleted. Kept in storage. */
 export type Seen = Record<string, { item: Item } | { deleted: true }>
 
-export type Workspace = { id: string; name: string; path: string }
+/** A row of the host's `workspace.list`. Its `id` is not the id a terminal carries: the CLI's terminal list
+ *  names a worktree `<repo>::<folder>` while this list names it `identity:…` (Orca 1.4.278, seen live);
+ *  only a folder workspace has the same id in both. So a worktree's terminals are found by its folder. */
+export type Workspace = { id: string; kind: 'worktree' | 'folder'; name: string; path: string }
 
 /** What a target is matched against. `terminals` is null when the list could not be read. */
 export type Places = { workspaces: Workspace[]; terminals: LiveTerminal[] | null; home: string }
@@ -57,6 +60,14 @@ export const unbound = (t: Pick<TerminalRef, 'handle' | 'leafId'>): boolean => !
 const text = (v: unknown): string => (typeof v === 'string' ? v : '')
 const record = (v: unknown): Record<string, unknown> | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
 const trimSlash = (path: string): string => (path.length > 1 ? path.replace(/\/+$/, '') : path)
+const lastPart = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
+/** The folder in a worktree id as the CLI gives it (`<repo>::<folder>`); '' for any other id. */
+const folderIn = (id: string): string => (id.includes('::') ? trimSlash(id.slice(id.indexOf('::') + 2)) : '')
+/** The terminal is in that workspace — by id for a folder workspace, by folder for a worktree. */
+const inWorkspace = (t: LiveTerminal, w: Workspace): boolean => t.workspaceId === w.id || (!!w.path && folderIn(t.workspaceId) === trimSlash(w.path))
+/** The workspace as a terminal line names it (src/worker.ts terminalOptions): a folder workspace by its
+ *  name, a worktree by its folder. */
+const shown = (w: Workspace): string => (w.kind === 'folder' ? w.name : lastPart(trimSlash(w.path)) || w.name)
 
 /** An item read field by field, or what is wrong with it. `now` decides whether its times ever come. */
 export function itemFrom(value: unknown, now: number): Item | ProblemCode {
@@ -137,7 +148,8 @@ export function seenFrom(value: unknown): Seen {
  */
 export function terminalFor(target: Target, places: Places): TerminalRef {
   const asked = target.workspace
-  const path = trimSlash(asked === '~' || asked.startsWith('~/') ? `${places.home}${asked.slice(1)}` : asked)
+  // A worktree id from the CLI holds its folder; `~` is the home folder.
+  const path = folderIn(asked) || trimSlash(asked === '~' || asked.startsWith('~/') ? `${places.home}${asked.slice(1)}` : asked)
   let held = places.workspaces.filter((w) => w.id === asked || (w.path && trimSlash(w.path) === path))
   if (held.length === 0) {
     // A writer inside a subfolder gives its own folder: the workspace that holds it, the deepest one.
@@ -145,23 +157,18 @@ export function terminalFor(target: Target, places: Places): TerminalRef {
     const deepest = Math.max(0, ...around.map((w) => trimSlash(w.path).length))
     held = around.filter((w) => trimSlash(w.path).length === deepest)
   }
-  const ids = new Set(held.map((w) => w.id))
   const kind = agentKind(target.agent)
   const title = target.title.toLowerCase()
-  const fits = (places.terminals ?? []).filter(
-    (t) => ids.has(t.workspaceId) && agentKind(t.agent) === kind && (!title || t.title.trim().toLowerCase() === title)
-  )
-  const nameOf = (id: string): string | undefined => held.find((w) => w.id === id)?.name
-  const none: TerminalRef = {
-    ...blankTerminal(),
-    title: target.title,
-    agent: target.agent,
-    workspaceId: held[0]?.id ?? '',
-    workspace: held[0]?.name ?? path.split('/').filter(Boolean).pop() ?? asked
+  const fits = (places.terminals ?? []).flatMap((t) => {
+    const w = held.find((x) => inWorkspace(t, x))
+    return w && agentKind(t.agent) === kind && (!title || t.title.trim().toLowerCase() === title) ? [{ t, w }] : []
+  })
+  if (fits.length !== 1) {
+    return { ...blankTerminal(), title: target.title, agent: target.agent, workspaceId: held[0]?.id ?? '', workspace: held[0] ? shown(held[0]) : lastPart(path) }
   }
-  if (fits.length !== 1) return none
-  const [t] = fits
-  return { handle: t.handle, title: t.title, agent: t.agent as string, workspaceId: t.workspaceId, workspace: nameOf(t.workspaceId) ?? none.workspace, tabId: t.tabId, leafId: t.leafId }
+  const [{ t, w }] = fits
+  // Named as the panel names an open terminal's workspace: by the host's name where the ids agree.
+  return { handle: t.handle, title: t.title, agent: t.agent as string, workspaceId: t.workspaceId, workspace: t.workspaceId === w.id ? w.name : shown(w), tabId: t.tabId, leafId: t.leafId }
 }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)

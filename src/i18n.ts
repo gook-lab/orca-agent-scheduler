@@ -237,7 +237,7 @@ const en = {
     inbox: {
       from: (by: string) => (by ? `From ${by} · inbox` : 'From the inbox'),
       noTerminal: (agent: string, workspace: string) =>
-        `No ${agent} terminal to send to in ${workspace} — it takes the terminal once exactly one is open there`,
+        `No single ${agent} terminal to send to in ${workspace} (none open, or several) — it takes the terminal once exactly one is open there`,
       editHint: (by: string) =>
         `${by || 'The inbox'} wrote this schedule. When it writes again, only the fields it changed are replaced — your other edits stay.`,
       title: 'Inbox — schedules from outside',
@@ -516,7 +516,7 @@ const ko: Words = {
     },
     inbox: {
       from: (by) => (by ? `출처: ${by} · inbox` : '출처: inbox'),
-      noTerminal: (agent, workspace) => `${workspace} 에 보낼 ${agent} 터미널이 없습니다 — 거기에 하나만 열려 있으면 그 터미널로 정해집니다`,
+      noTerminal: (agent, workspace) => `${workspace} 에서 보낼 ${agent} 터미널을 하나로 정하지 못했습니다(없거나 여럿) — 거기에 하나만 열려 있으면 그 터미널로 정해집니다`,
       editHint: (by) =>
         `${by || 'inbox'} 에서 들어온 예약입니다. 같은 출처가 다시 쓰면 그쪽이 바꾼 항목만 바뀌고, 여기서 고친 나머지는 그대로 남습니다.`,
       title: 'Inbox — 바깥에서 넣는 예약',

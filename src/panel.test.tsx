@@ -1741,9 +1741,9 @@ test('a schedule from the inbox with no terminal yet says which one it waits for
   assert.deepEqual(
     waits.map((e) => [plain(e.text), e.props.tone]),
     [
-      ['No Claude Code terminal to send to in app — it takes the terminal once exactly one is open there', 'warning'],
-      ['No Claude Code terminal to send to in app — it takes the terminal once exactly one is open there', undefined],
-      ['No Codex terminal to send to in proj — it takes the terminal once exactly one is open there', 'warning']
+      ['No single Claude Code terminal to send to in app (none open, or several) — it takes the terminal once exactly one is open there', 'warning'],
+      ['No single Claude Code terminal to send to in app (none open, or several) — it takes the terminal once exactly one is open there', undefined],
+      ['No single Codex terminal to send to in proj (none open, or several) — it takes the terminal once exactly one is open there', 'warning']
     ],
     'orange while it is on; the bound one says nothing'
   )

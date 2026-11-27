@@ -25,22 +25,27 @@ const live = (handle: string, agent: string | null, workspaceId: string, title =
   leafId: `leaf-${handle}`,
   lastOutputAt: null
 })
+// Ids as Orca 1.4.278 gives them: the host's workspace list names a worktree `identity:…`, the CLI's
+// terminal list names it `<repo>::<folder>`; a folder workspace has one id in both.
+const app = 'r1::/Users/me/code/app'
+const fix = 'r1::/Users/me/code/app/wt/fix'
 const places = (terminals: LiveTerminal[] | null): Places => ({
   workspaces: [
-    { id: 'repo::/Users/me/code/app', name: 'app', path: '/Users/me/code/app' },
-    { id: 'repo::/Users/me/code/app/wt/fix', name: 'fix', path: '/Users/me/code/app/wt/fix' },
-    { id: 'folder-1', name: 'notes', path: '/Users/me/notes/' }
+    { id: 'identity:wt2:local:app', kind: 'worktree', name: 'main', path: '/Users/me/code/app' },
+    { id: 'identity:wt2:local:fix', kind: 'worktree', name: 'fix-branch', path: '/Users/me/code/app/wt/fix' },
+    { id: 'folder:1', kind: 'folder', name: 'Task', path: '/Users/me/notes/' }
   ],
   terminals,
   home: '/Users/me'
 })
-const one = places([live('h1', 'claude', 'repo::/Users/me/code/app', 'review'), live('h2', 'codex', 'repo::/Users/me/code/app'), live('h3', null, 'repo::/Users/me/code/app')])
+const one = places([live('h1', 'claude', app, 'review'), live('h2', 'codex', app), live('h3', null, app), live('h7', 'claude', 'r2::/Users/me/code/other')])
 const file = (name: string, value: unknown): { file: string; text: string | null } => ({ file: name, text: JSON.stringify(value) })
 const run = (list: Schedule[], seen: Seen, entries: Entry[], at: Places = one) => sync(list, seen, entries, async () => at, now)
 const entries = (...values: unknown[]): Entry[] => entriesFrom(values.map((v, i) => file(`${i}.json`, v)), now)
 
 test('an inbox file is read field by field — result line and on by default, a new conversation only when asked', () => {
   assert.deepEqual(entriesFrom([file('a.json', written)], now), [{ file: 'a.json', item }])
+  assert.ok(!('enabled' in written) && item.enabled, 'a file that does not say arrives switched on')
   const [e] = entries({ ...written, name: '  Tidy  ', newConversation: true, askResult: false, enabled: false, target: { workspace: '~/code/app/', agent: 'Codex', title: ' review ' }, precheck: 'rm -rf ~' })
   assert.deepEqual('item' in e && e.item, {
     ...item,
@@ -76,25 +81,27 @@ test('a file that cannot be used says which part is wrong, and does not stop the
 
 test('a target is the one terminal in that workspace running that agent', () => {
   const t = terminalFor(item.target, one)
-  assert.deepEqual(t, { handle: 'h1', title: 'review', agent: 'claude', workspaceId: 'repo::/Users/me/code/app', workspace: 'app', tabId: 'tab-h1', leafId: 'leaf-h1' })
+  assert.deepEqual(t, { handle: 'h1', title: 'review', agent: 'claude', workspaceId: app, workspace: 'app', tabId: 'tab-h1', leafId: 'leaf-h1' }, 'found by its folder; the ids differ')
   assert.equal(terminalFor({ ...item.target, agent: 'codex' }, one).handle, 'h2')
   assert.equal(terminalFor({ ...item.target, workspace: '~/code/app' }, one).handle, 'h1', '~ is the home folder')
-  assert.equal(terminalFor({ ...item.target, workspace: 'repo::/Users/me/code/app' }, one).handle, 'h1', 'or the workspace by its Orca id')
+  assert.equal(terminalFor({ ...item.target, workspace: app }, one).handle, 'h1', 'or the workspace by its id in the CLI')
+  assert.equal(terminalFor({ ...item.target, workspace: 'identity:wt2:local:app' }, one).handle, 'h1', 'or by its id in the host\'s list')
   assert.equal(terminalFor({ ...item.target, workspace: '/Users/me/code/app/packages/web' }, one).handle, 'h1', 'a folder inside the workspace')
 })
 
 test('no terminal, or more than one, and nothing is picked — the reference says where it would go', () => {
   const none = terminalFor({ ...item.target, agent: 'gemini' }, one)
   assert.ok(unbound(none))
-  assert.deepEqual([none.agent, none.workspace, none.workspaceId], ['gemini', 'app', 'repo::/Users/me/code/app'])
-  const two = places([live('h1', 'claude', 'repo::/Users/me/code/app', 'review'), live('h4', 'claude', 'repo::/Users/me/code/app', 'build')])
+  assert.deepEqual([none.agent, none.workspace, none.workspaceId], ['gemini', 'app', 'identity:wt2:local:app'])
+  const two = places([live('h1', 'claude', app, 'review'), live('h4', 'claude', app, 'build')])
   assert.ok(unbound(terminalFor(item.target, two)), 'between two it does not guess')
   assert.equal(terminalFor({ ...item.target, title: 'Build' }, two).handle, 'h4', 'a title narrows it')
   assert.ok(unbound(terminalFor({ ...item.target, title: 'deploy' }, two)), 'a title no terminal has matches none')
   assert.ok(unbound(terminalFor(item.target, places(null))), 'the terminal list could not be read')
-  const deep = places([live('h5', 'claude', 'repo::/Users/me/code/app/wt/fix'), live('h1', 'claude', 'repo::/Users/me/code/app')])
+  const deep = places([live('h5', 'claude', fix), live('h1', 'claude', app)])
   assert.equal(terminalFor({ ...item.target, workspace: '/Users/me/code/app/wt/fix/src' }, deep).handle, 'h5', 'the deepest workspace that holds the folder')
-  assert.equal(terminalFor({ ...item.target, workspace: '/Users/me/notes' }, places([live('h6', 'claude', 'folder-1')])).handle, 'h6', 'a trailing slash does not matter')
+  const inFolder = terminalFor({ ...item.target, workspace: '/Users/me/notes' }, places([live('h6', 'claude', 'folder:1')]))
+  assert.deepEqual([inFolder.handle, inFolder.workspace], ['h6', 'Task'], 'a folder workspace: found by its id, shown by its name; a trailing slash does not matter')
   const stray = terminalFor({ ...item.target, workspace: '/Users/me/elsewhere/proj' }, one)
   assert.deepEqual([unbound(stray), stray.workspace, stray.workspaceId], [true, 'proj', ''], 'a folder no workspace holds is named by its last part')
 })
@@ -178,7 +185,7 @@ test('deleted removes the schedule, once', async () => {
 })
 
 test('without a matching terminal it comes in with none, and takes one when exactly one is open', async () => {
-  const nothingOpen = places([live('h2', 'codex', 'repo::/Users/me/code/app')])
+  const nothingOpen = places([live('h2', 'codex', app)])
   const first = await run([], {}, entries(written), nothingOpen)
   const [s] = first.list
   assert.ok(unbound(s.terminal))

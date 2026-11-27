@@ -1,7 +1,7 @@
 // Schedule worker. It owns a status bar item, so it keeps running while the plugin is on (checks every 30 s).
 // Schedules live in storage 'schedules' and only this file edits them; the panel asks by request and hears by post.
 // The terminal list and sending go through the Orca CLI (why: src/cli.ts).
-import { readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { type CliRunner, cliRunner, findCli, holdAgents, runCheck, sendArgs, sentFrom, terminalsFrom } from './cli'
@@ -17,6 +17,7 @@ import {
   needsAttention,
   newMemory,
   nextAfter,
+  type LiveTerminal,
   type Notice,
   onAgentStatus,
   type RunRecord,
@@ -26,15 +27,18 @@ import {
   type TerminalRef,
   tick
 } from './engine'
+import { type Entry, entriesFrom, type Places, type Seen, seenFrom, sync } from './inbox'
 import { type Lang, langOf, lateText, type Note, noteText, type Status, statuses, statusText, words } from './i18n'
 import { importedId, itemsFrom, scheduleFrom } from './orcacron'
-import { type ImportList, LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
+import { type ImportList, type InboxStatus, LANG_KEY, type RunnerStatus, type ScheduleDraft, type TerminalOption } from './protocol'
 import { isWebLink } from './report'
 import { agentKind } from './screen'
 import { messageOf } from './text'
 import { clock } from './timespec'
 
 export const KEY = 'schedules'
+/** What was last applied from the inbox folder, by item id (src/inbox.ts Seen). */
+export const INBOX_KEY = 'inbox'
 export const TICK_MS = 30_000
 /** Wait after a stop event before reading the screen — a question dialog is drawn a moment after the first event. */
 export const SETTLE_MS = 1500
@@ -84,6 +88,12 @@ function terminalFrom(value: unknown): TerminalRef {
   return terminal
 }
 
+/** Where a schedule from the inbox came from; nothing for one made in the panel. */
+function sourceFrom(value: unknown): Pick<Schedule, 'source'> {
+  const from = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  return typeof from.id === 'string' && from.id ? { source: { id: from.id, by: text(from.by) } } : {}
+}
+
 /**
  * Schedules as storage holds them, read field by field. Older shapes miss fields or hold what this
  * version cannot show, and one entry that cannot be read must not stop the rest — a number where the
@@ -114,7 +124,8 @@ export function normalize(value: unknown): Schedule[] {
         sawWorking: v.sawWorking === true,
         blocked: isNote(v.blocked) ? v.blocked : null,
         lastStatus: isStatus(v.lastStatus) ? v.lastStatus : null,
-        history: (Array.isArray(v.history) ? v.history : []).map(recordFrom).filter((r): r is RunRecord => r !== null)
+        history: (Array.isArray(v.history) ? v.history : []).map(recordFrom).filter((r): r is RunRecord => r !== null),
+        ...sourceFrom(v.source)
       }
     })
 }
@@ -146,12 +157,39 @@ export const orcaCron: { dir: () => string; read: (path: string) => string | nul
   }
 }
 
+/** An inbox file is a few hundred bytes of JSON; a prompt can be long, a megabyte is not one. */
+const INBOX_MAX_BYTES = 256_000
+/** Files read per check, in name order — the read is synchronous, and a folder is not a database. */
+export const INBOX_MAX_FILES = 200
+
+/** The inbox folder, and its `*.json` files as text (null for what is not a plain file of a sane size, as
+ *  with OrcaCron's file above). Null when the folder is not there. Tests swap these. */
+export const inbox: { dir: () => string; read: (dir: string) => { file: string; text: string | null }[] | null } = {
+  dir: () => `${process.env.ORCA_AGENT_SCHEDULER_HOME || `${homedir()}/.orca-agent-scheduler`}/inbox`,
+  read: (dir) => {
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return null
+    return readdirSync(dir)
+      .filter((name) => name.endsWith('.json') && !name.startsWith('.'))
+      .sort()
+      .slice(0, INBOX_MAX_FILES)
+      .map((file) => {
+        const stat = statSync(`${dir}/${file}`, { throwIfNoEntry: false })
+        return { file, text: stat?.isFile() && stat.size <= INBOX_MAX_BYTES ? readFileSync(`${dir}/${file}`, 'utf8') : null }
+      })
+  }
+}
+
+const tilde = (path: string): string => (path === homedir() || path.startsWith(`${homedir()}/`) ? `~${path.slice(homedir().length)}` : path)
+
 export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   const stored = await orca.storage.get(KEY)
   let list = normalize(stored)
   // They are left out of the next write, so say so once.
   if (Array.isArray(stored) && stored.length !== list.length) orca.log(`${stored.length - list.length} stored schedule(s) could not be read and are dropped`)
   let saved = JSON.stringify(list)
+  let seen: Seen = seenFrom(await orca.storage.get(INBOX_KEY))
+  let savedSeen = JSON.stringify(seen)
+  const inboxStatus: InboxStatus = { dir: tilde(inbox.dir()), found: false, problems: [] }
   let lang: Lang = langOf(await orca.storage.get(LANG_KEY))
   const memory = newMemory()
   const bin = cli.run ? null : findCli(process.execPath)
@@ -249,6 +287,59 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     updateStatusBar()
   }
 
+  /** What the inbox last said goes to storage after the schedules it made — written the other way round and
+   *  cut off in between, a new item would count as applied with no schedule to show for it. */
+  const persistSeen = async (): Promise<void> => {
+    const text = JSON.stringify(seen)
+    if (text === savedSeen) return
+    await orca.storage.set(INBOX_KEY, seen)
+    savedSeen = text
+  }
+
+  /** Reads the inbox folder and brings the schedules in line with it (src/inbox.ts). The terminal list it
+   *  had to read for a target is handed back, so the check that follows does not read it a second time. */
+  let problemsLogged = ''
+  const readInbox = async (now: number): Promise<{ terminals: LiveTerminal[] | null } | null> => {
+    const dir = inbox.dir()
+    inboxStatus.dir = tilde(dir)
+    const files = inbox.read(dir)
+    inboxStatus.found = files !== null
+    const entries: Entry[] = entriesFrom(files ?? [], now)
+    inboxStatus.problems = entries.flatMap((e) => ('problem' in e ? [{ file: e.file, code: e.problem }] : []))
+    // Said once per set of bad files, not at every check.
+    const problems = JSON.stringify(inboxStatus.problems)
+    if (problems !== problemsLogged) {
+      problemsLogged = problems
+      for (const p of inboxStatus.problems) orca.log(`inbox ${p.file}: ${words('en').ui.inbox.problem[p.code]}`)
+    }
+    let places: Places | null = null
+    const r = await sync(
+      list,
+      seen,
+      entries,
+      async () => {
+        if (places) return places
+        let workspaces: Places['workspaces'] = []
+        try {
+          workspaces = (await orca.host.call('workspace.list')).workspaces.map((w) => ({ id: w.id, kind: w.kind, name: w.name, path: w.path }))
+        } catch {
+          // no workspace is known, so no terminal fits — the schedule waits for one, or for a person
+        }
+        const terminals = await io.terminals().catch(() => null)
+        places = { workspaces, terminals, home: homedir() }
+        return places
+      },
+      now
+    )
+    list = r.list
+    seen = r.seen
+    for (const l of r.log) orca.log(l)
+    for (const s of r.added) {
+      void orca.host.call('notifications.show', { title: TITLE, body: words(lang).ui.inbox.added(s.source?.by ?? '', s.name) }).catch(() => undefined)
+    }
+    return places ? { terminals: (places as Places).terminals } : null
+  }
+
   /**
    * A panel edit is all or nothing. When storage refuses the write the list goes back to what it was, so
    * the panel's "could not save" stays true: kept in memory, the edit showed up with the next check, and
@@ -270,13 +361,26 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   // At most one check waits behind the one running. A hung CLI call takes up to a minute; the 30-second
   // timer then stacked checks, and every panel edit waited behind all of them.
   let lined = false
+  let inboxError = ''
   const runTick = (): Promise<void> => {
     if (lined) return Promise.resolve()
     lined = true
     return serial(async () => {
       lined = false
       const now = Date.now()
-      const r = await tick(list, io, memory, now, lang)
+      // The inbox first, so a schedule that arrived — or found its terminal — is part of this check. A
+      // folder that cannot be read leaves the schedules as they are, and is said once, not every 30 seconds.
+      const listed = await readInbox(now).then(
+        (read) => {
+          inboxError = ''
+          return read
+        },
+        (error) => {
+          if (messageOf(error) !== inboxError) orca.log(`inbox: ${(inboxError = messageOf(error))}`)
+          return null
+        }
+      )
+      const r = await tick(list, listed ? { ...io, terminals: async () => listed.terminals } : io, memory, now, lang)
       status.lastTickAt = now
       status.log = [...r.log.map((l) => `${new Date(now).toLocaleTimeString('en-GB')} ${l}`), ...status.log].slice(0, 50)
       for (const l of r.log) orca.log(l)
@@ -292,6 +396,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       }
       // A write that fails here is tried again by the next check — what was sent stays known meanwhile.
       await persist()
+      await persistSeen()
     })
       .then(() => pushTerminals())
       .catch((error) => orca.log(`check failed: ${messageOf(error)}`))
@@ -495,13 +600,13 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     } catch (error) {
       result = { error: messageOf(error) }
     }
-    return { result, folder: folder === homedir() || folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder }
+    return { result, folder: tilde(folder) }
   })
 
   /** OrcaCron's schedules with their terminals matched to the ones open now. */
   const importable = async (): Promise<{ list: ImportList; items: ReturnType<typeof itemsFrom>; open: TerminalOption[] }> => {
     const dir = orcaCron.dir()
-    const shown = dir.startsWith(`${homedir()}/`) ? `~${dir.slice(homedir().length)}` : dir
+    const shown = tilde(dir)
     let file: unknown = null
     let found = false
     try {
@@ -551,6 +656,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       return { added: fresh.length }
     })
   )
+
+  orca.panels.handle('inbox.status', () => inboxStatus)
 
   updateStatusBar()
   if (timer) clearInterval(timer)

@@ -1,6 +1,6 @@
 # Agent Scheduler — Orca plugin
 
-Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times. It waits until that terminal is idle, sends through the Orca CLI, and records when the agent finishes — with a one-line result when you ask for one. The plugin grew out of the menubar app [OrcaCron](https://github.com/gook-lab/orca-cron) and keeps its own schedules; the two do not share data.
+Sends a prompt to a Claude Code, Codex or Gemini CLI terminal in Orca at set times. It waits until that terminal is idle, sends through the Orca CLI, and records when the agent finishes — with a one-line result when you ask for one. A schedule is made in the panel, or written into the plugin's inbox folder by a bot or an agent ([Inbox](#inbox--schedules-written-from-outside-as-json-files)). The plugin grew out of the menubar app [OrcaCron](https://github.com/gook-lab/orca-cron) and keeps its own schedules; the two do not share data.
 
 <p>
   <img src="https://raw.githubusercontent.com/gook-lab/orca-agent-scheduler/main/docs/panel-schedules.png" width="300" align="top" alt="The Schedules tab with three schedules under their terminals: one done, one running, one waiting while the agent works">
@@ -15,7 +15,7 @@ The panel in Orca's right sidebar: schedules grouped by terminal, and the introd
 orca plugin install gook-lab/orca-agent-scheduler
 ```
 
-**macOS only for now**, and Orca 1.4.248 or newer. Prompts go out through the CLI inside the Orca app (`<Orca>.app/Contents/Resources/bin/orca`); on Windows and Linux the plugin does not look for it yet, and the panel says `Orca CLI not found` instead of listing terminals. Orca asks you to approve what the plugin may do before it runs: a worker on your machine that calls the Orca CLI to send prompts, reads terminal output, agent status and your workspaces, keeps its own storage and shows notifications.
+**macOS only for now**, and Orca 1.4.248 or newer. Prompts go out through the CLI inside the Orca app (`<Orca>.app/Contents/Resources/bin/orca`); on Windows and Linux the plugin does not look for it yet, and the panel says `Orca CLI not found` instead of listing terminals. Orca asks you to approve what the plugin may do before it runs: a worker on your machine that calls the Orca CLI to send prompts, reads terminal output, agent status and your workspaces, reads the schedule files other programs write into `~/.orca-agent-scheduler/inbox`, keeps its own storage and shows notifications.
 
 Update with `orca plugin update gook-lab.agent-scheduler`, and remove it with `orca plugin uninstall gook-lab.agent-scheduler`. What each version changed is in the [release notes](https://github.com/gook-lab/orca-agent-scheduler/releases) (each with a summary in Korean) — **What's new** in the panel's Settings opens them — and in [CHANGELOG.md](CHANGELOG.md).
 
@@ -43,6 +43,7 @@ A schedule belongs to one terminal you already have open, in any workspace. The 
 - Orca occasionally drops a working terminal's agent for a second or two. A terminal keeps the agent it was last seen with for two checks (1 minute), so it stays in the list and the form; nothing is sent on that alone — the screen still has to show that agent's input box.
 - **Start a new conversation** (schedules only) sends `/clear` first, then the prompt once the screen settles, so each run starts in a new conversation instead of adding to the last one. Claude Code, Codex and Gemini CLI all read `/clear` as a new conversation. Turn it on only for a terminal kept for that schedule — `/clear` erases the conversation in it.
 - A schedule keeps its terminal while its run is going. The end of a run is read from the terminal the prompt went to, so the form lets you change the terminal once the run has ended; every other field can be edited meanwhile.
+- A schedule written into the inbox has no terminal to point at — a bot's chat is not one. It names a workspace and an agent, and takes the terminal when exactly one fits ([Inbox](#inbox--schedules-written-from-outside-as-json-files)).
 
 ## Sending — idle check, then the Orca CLI
 
@@ -167,16 +168,16 @@ The calendar icon in the right sidebar opens the **Agent Scheduler** panel. It i
 | Tabs and search | **Schedules N** and **Terminals N**. Entering Terminals reads the terminal list afresh (the reload button spins meanwhile; what is there stays visible). The search box under them filters both, by terminal title, workspace, agent or schedule name, and opens a folded block that holds a match; a search that hides everything says so with **Clear search** |
 | Schedules | Badges for what is out of the ordinary — waiting, running, need attention — and nothing above the list while every schedule is at rest; then one block per terminal. What runs next is on each card and in Orca's status bar, and the switches say what is on. With nothing scheduled, one line and an **Open Terminals** button |
 | Terminal line | The agent's mark (Claude Code ✳, Codex `>_`, Gemini CLI ✦), a green dot while the terminal is open, the terminal's title, then its workspace in grey — the order of the form's terminal list. A block is one terminal with its schedules, not a workspace: the buttons on its line act on that terminal alone. Of the room left for words the shorter of the two keeps its width — the workspace up to a third, the title up to two thirds — and the other takes what is left, ending in … when it runs out. In a block the chevron folds it; a folded block reads `2 schedules · next tomorrow 09:00`. ↗ brings Orca to that terminal (`orca terminal switch`). Then **Send once** — one prompt to this terminal only, apart from its schedules — and **New schedule for this terminal** |
-| Schedule in a block | A card on a filled surface with a line around it, folded until it is opened. At its left a round mark for a glance down the list: what is going on now — running ▸, a person must act !, waiting to send … — else how the last run went — ✓ succeeded or done, ✕ failed, – skipped (grey when the agent's result says there was nothing to do, orange when the run waited 60 minutes and never went out), ? stopped at a question — a dot when it has not run yet, and an empty circle when the schedule is off. Folded, one column beside the mark so every line starts at the same edge: the switch with the name; the next run with the time left (`next today 19:13 · in 2h 33m`) and two buttons, send now (▷) and open (⌄); then how the last run went as a word in the mark's colour with when and how long — in seconds under a minute — (in its place a spinner while a run is going, and `Waiting to send` with the reason while one waits — the last run then opens with the card), and under it — when that run failed, timed out, was stopped, ended at a question or never went out — one line of why, cut where it runs out: what the agent wrote, else what the plugin knows (`Waited 60 min: agent is working`, `Send failed: …`) — a schedule that has not run yet ends after two lines. Opened in place: the result as a badge, what the agent wrote and its link when the schedule asks for a result, how the run's end was seen, the rule (with `/clear` when it clears first, and the precheck command when there is one), the start of the prompt, **Edit**, **Duplicate** and **Delete**, and the history (the newest 30 runs). **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, in the buttons' place, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn says `Waiting to send` and the reason, in the same column; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the next step beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box — and both show on a folded card too |
+| Schedule in a block | A card on a filled surface with a line around it, folded until it is opened. At its left a round mark for a glance down the list: what is going on now — running ▸, a person must act !, waiting to send … — else how the last run went — ✓ succeeded or done, ✕ failed, – skipped (grey when the agent's result says there was nothing to do, orange when the run waited 60 minutes and never went out), ? stopped at a question — a dot when it has not run yet, and an empty circle when the schedule is off. Folded, one column beside the mark so every line starts at the same edge: the switch with the name; the next run with the time left (`next today 19:13 · in 2h 33m`) and two buttons, send now (▷) and open (⌄); then how the last run went as a word in the mark's colour with when and how long — in seconds under a minute — (in its place a spinner while a run is going, and `Waiting to send` with the reason while one waits — the last run then opens with the card), and under it — when that run failed, timed out, was stopped, ended at a question or never went out — one line of why, cut where it runs out: what the agent wrote, else what the plugin knows (`Waited 60 min: agent is working`, `Send failed: …`) — a schedule that has not run yet ends after two lines. Opened in place: the result as a badge, what the agent wrote and its link when the schedule asks for a result, how the run's end was seen, the rule (with `/clear` when it clears first, and the precheck command when there is one), the start of the prompt, **Edit**, **Duplicate** and **Delete**, and the history (the newest 30 runs). A schedule that came from the inbox says so in grey under its other lines — `From Orca bot · inbox` — folded or open, and the search finds it by that name. **Send now** is one run at a time: it is off while the schedule waits to send or its run is going, and when its terminal is closed, and the tooltip says which. **Delete** asks in the card first, in the buttons' place, with how many past results go with it; Undo then stays for 8 seconds in the deleted schedule's place. A run waiting its turn says `Waiting to send` and the reason, in the same column; an orange warning appears only when a person must act (the same ones counted on top and in the status bar), with the next step beside it — **Pick a terminal**, or **Show this terminal in Orca** to answer a dialog or clear the input box — and both show on a folded card too |
 | Sent records | One-off sends are folded under their terminal as `Sent N · last today 12:03`. Ones not sent yet are counted apart — `Waiting to send 1 · Sent 2` — so a send stuck on a closed terminal never reads as sent. A new send opens the group and it stays open when that send ends. A finished one shows its result as a schedule's does — how long it took, why it failed, the summary and link. The newest 20 finished ones are kept |
 | Terminals | Every open agent terminal, each on the same line as above. With none, it says to run claude, codex or gemini in an Orca terminal, with a reload button (the form's terminal picker says the same). When the worker found no Orca CLI it says that instead, since no terminal could show up. A terminal with schedules shows `Schedules N`; pressing it opens that block on the Schedules tab |
-| Settings | Language (same as Orca, English or Korean); **How sending works** — the rule for sending (checked every 30 seconds; nothing new for a minute with an empty input box; skipped after 60 minutes of waiting); Show the introduction again; **What's new**, which opens the release notes; and Import from OrcaCron when that app's schedules are on this computer |
+| Settings | Language (same as Orca, English or Korean); **How sending works** — the rule for sending (checked every 30 seconds; nothing new for a minute with an empty input box; skipped after 60 minutes of waiting); Show the introduction again; **What's new**, which opens the release notes; **Inbox** — the folder, how many schedules came from it, and the files of the last check that could not be used, each with the reason; and Import from OrcaCron when that app's schedules are on this computer |
 
 Until the worker first answers, both tabs show a loading placeholder rather than an empty list, and the tab names carry no number (a 0 would read as none).
 
 Text a person or an agent wrote — a name, a summary, the reason in a note, an address — wraps inside its card at any panel width: a run of 16 letters with no space gets a place to break (checked on the real panel at 280, 304 and 457 px).
 
-A closed terminal keeps its block, greyed out, with its last known agent. A schedule there that is switched on says in orange that nothing can be sent, with **Pick a terminal** (Edit, opened at the terminal list); a due run waits until the terminal is open again or you pick another.
+A closed terminal keeps its block, greyed out, with its last known agent. A schedule there that is switched on says in orange that nothing can be sent, with **Pick a terminal** (Edit, opened at the terminal list); a due run waits until the terminal is open again or you pick another. Schedules from the inbox that have no terminal yet stand the same way, in one block per workspace and agent they wait for.
 
 The status bar shows the next run, and turns orange with a count when a schedule needs attention (terminal not open, no agent, a dialog, text in the input box, the CLI missing).
 
@@ -194,6 +195,105 @@ On a computer where the menubar app [OrcaCron](https://github.com/gook-lab/orca-
 - The terminal is matched by its handle, or by tab and pane after Orca restarted. One that is not open shows as `not open`; pick it again in Edit.
 - Importing again adds nothing, and the app's folder is only read.
 
+## Inbox — schedules written from outside as JSON files
+
+A bot or an agent that is asked for a schedule ("every weekday at 9, review my pull requests") cannot press + in the panel. It writes one JSON file into `~/.orca-agent-scheduler/inbox/` instead (`ORCA_AGENT_SCHEDULER_HOME` moves the folder that holds `inbox/`). The worker reads the folder at every check, so the schedule is in the panel within 30 seconds, with a notification (`Orca bot added a schedule: Morning PR review`).
+
+A folder, because nothing else reaches an installed plugin from outside on Orca 1.4.278: the handlers the worker registers answer only the plugin's own panel (`plugin.request`), `orca plugin dev request` refuses installed plugins, and the CLI has no command that calls into one. A file also needs no Orca running when it is written.
+
+### File format — one schedule per file
+
+Any name ending in `.json`; the `id` inside is what counts.
+
+```json
+{
+  "id": "orca-bot:auto_7f3a",
+  "source": "Orca bot",
+  "name": "Morning PR review",
+  "cron": "0 9 * * 1-5",
+  "prompt": "Review the pull requests waiting for me. Last time: {{last_result|nothing yet}}",
+  "target": { "workspace": "/Users/me/code/app", "agent": "claude" },
+  "newConversation": false,
+  "askResult": true,
+  "enabled": true
+}
+```
+
+| Field | Value |
+|---|---|
+| `id` | The writer's own id for this schedule, up to 200 characters. The same `id` again replaces; with `"deleted": true` it removes. Prefix it with the writer's name so two writers do not collide |
+| `source` | Who wrote it, as the card shows it (`From Orca bot · inbox`). Optional, up to 60 characters |
+| `name` · `cron` · `prompt` | As in the form. `cron` is five fields, or six with a year, several joined by `;`, in the computer's local time. The prompt may use the [prompt variables](#prompt-variables--filled-in-when-the-run-goes-out) |
+| `target` | `workspace` and `agent` — below. `title` is optional |
+| `newConversation` | **Start a new conversation** (`/clear` first). Left out = off |
+| `askResult` | **Ask for a one-line result**. Left out = on, as for a new schedule in the form |
+| `enabled` | Left out = on: a schedule from the inbox arrives switched on and runs at its next time, unlike one imported from OrcaCron. `false` brings it in switched off, for a person to turn on |
+
+To remove the schedule, write `{ "id": "orca-bot:auto_7f3a", "deleted": true }` under the same or another name. Deleting the file does nothing: the schedule stays, and is no longer updated.
+
+A file that cannot be used — not JSON, a field missing, times that never come, an `id` another file already has — is passed by, and the others still come in. Settings lists such files with the reason, and the log says it once (`inbox review.json: "cron" not understood`). A file caught half-written is read whole at the next check; writing under another ending and renaming to `.json` avoids even that.
+
+A precheck command is not taken from a file. It runs in your shell, so it stays something you type in the panel; add it there with Edit.
+
+### Target — workspace folder and agent
+
+The writer has no terminal to point at, so it says where the work belongs:
+
+| Field | Value |
+|---|---|
+| `workspace` | The workspace's folder (`~` allowed), a folder inside it — the deepest workspace that holds it counts — or the Orca workspace id, as `orca worktree list` or the plugin API gives it |
+| `agent` | `claude`, `codex` or `gemini` |
+| `title` | Optional: only the terminal with this title (letter case aside) — the title on the terminal's line in this panel, which is the one the agent sets and changes as it works, not the name of the tab |
+
+- Exactly one open terminal in that workspace runs that agent: the schedule goes on it, as if picked in the form.
+- None, or more than one: the schedule arrives without a terminal. Its card says so in orange — `No single Claude Code terminal to send to in app (none open, or several)` — with **Pick a terminal**, and a run that falls due waits like one whose terminal was closed (skipped after 60 minutes). Between two terminals nothing is guessed: with `newConversation` a wrong guess would erase a conversation.
+- A schedule without a terminal is matched again at every check, and takes the terminal once exactly one fits — start `claude` in that workspace and it goes there by itself.
+- Once it has a terminal — matched or picked — it keeps it like any other schedule. The target is looked at again only when the writer changes it.
+
+### Updates — field-by-field merge of the writer's changes and a person's edits
+
+The file stays in the folder; the plugin never writes to it or deletes it. What it last applied is remembered per `id` in the plugin's own storage, and a file is acted on only when it reads differently from that.
+
+| What happens | Then |
+|---|---|
+| The file is unchanged | Nothing. What you edited in the panel stays — and so does a schedule you deleted there |
+| The writer changes the file | Only the fields whose value changed in the file are replaced. You renamed it and the writer moved the time: the new time, your name. The switch is a field like the others — one you turned off stays off until the writer changes `enabled` |
+| The writer changes a field you also edited | The writer's value. The form says so when you open Edit on such a schedule |
+| You deleted it, then the writer changes the file | It comes back, as the new file says |
+| The writer changes `target` while a run is going | The whole file waits until that run has ended |
+| The writer writes `"deleted": true` | The schedule and its history are removed. Written again without the mark, it is a new schedule |
+
+History, the last result and a run in flight are untouched by an update. Duplicate makes a copy that is yours: it has no source and the writer cannot reach it.
+
+### Writer example — an Orca bot automation mirrored into the inbox
+
+Asked for a recurring job, the Orca bot creates an Orca automation. To have the same schedule in this panel — sent into the terminal you already work in — it writes one more file, with the automation's id in `id` so that a later edit or removal finds the same schedule:
+
+```json
+{
+  "id": "orca-automation:d42233f8-5dcc-4489-abed-e2f99b99f06c",
+  "source": "Orca bot",
+  "name": "Branch sync ledger, weekly",
+  "cron": "0 10 * * 1",
+  "prompt": "Check the branch-sync ledger for new commits since the last baseline and report what is missing.",
+  "target": { "workspace": "/Users/me/code/docs", "agent": "claude" },
+  "newConversation": true,
+  "askResult": true
+}
+```
+
+```sh
+mkdir -p ~/.orca-agent-scheduler/inbox
+f=~/.orca-agent-scheduler/inbox/orca-automation-d42233f8
+cat > "$f.tmp" < schedule.json && mv "$f.tmp" "$f.json"
+```
+
+- When the automation is edited, write the file again with the same `id`; when it is removed, write `{ "id": "orca-automation:d42233f8-…", "deleted": true }`.
+- The bot turns off its own automation for the same job once it has written the file (`orca automations edit <id> --disabled`). An automation starts its own session and this schedule types into your terminal: with both on, the work is done twice. The schedule arrives switched on, so the one to turn off is the automation, and that is the bot's to do — the plugin does not touch automations.
+- Without this plugin the file is never read and changes nothing, so a bot may write it either way.
+
+Up to 200 files are read, in name order, each up to 256 KB; only plain files are opened.
+
 ## Permissions — screen, status, CLI
 
 | Permission | Used for |
@@ -204,14 +304,16 @@ On a computer where the menubar app [OrcaCron](https://github.com/gook-lab/orca-
 | `storage:own` | Schedules and the language setting |
 | `notifications:show` | A run that needs a person, one that failed (its precheck included), was stopped, timed out or was skipped after 60 minutes, and one sent late |
 
-Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI. The same access reads `~/.orca-cron/schedules.json` for Import from OrcaCron, and runs a schedule's precheck command — one you typed — in your login shell; apart from what that command does, the worker reads and writes no other file. The plugin makes no network request of its own (a precheck such as `gh pr list` makes its own); a result link and **What's new** open in your browser only when you press them.
+Sending, showing a terminal and the terminal list go through the Orca CLI, so they do not appear as permissions. The worker runs as a trusted Node process under your account, as the approval text says, which is what lets it run the CLI. The same access reads two things outside the plugin's own storage, and writes to neither: `~/.orca-cron/schedules.json` for Import from OrcaCron, and the `*.json` files in `~/.orca-agent-scheduler/inbox`, where a bot or an agent leaves schedules ([Inbox](#inbox--schedules-written-from-outside-as-json-files)). It also runs a schedule's precheck command — one you typed, never one from a file — in your login shell. Apart from what that command does, the worker reads and writes no other file.
+
+The inbox adds no new reach. A program that can write into that folder runs under your account, and could already type into your terminals through the Orca CLI. What it adds is visible: a schedule from the inbox is announced with a notification when it arrives and names its writer on its card. The plugin makes no network request of its own (a precheck such as `gh pr list` makes its own); a result link and **What's new** open in your browser only when you press them.
 
 ## Development — orca plugin test · check
 
 ```bash
 ORCA="/Applications/Orca.app/Contents/Resources/bin/orca"   # the CLI of the Orca app you run
 $ORCA plugin test .                # tests: schedule maths, screen checks, engine, worker, panel
-$ORCA plugin check . --json        # draws the panel once per scenario (first · empty · open · late · result · stuck · busy · korean)
+$ORCA plugin check . --json        # draws the panel once per scenario (first · empty · open · late · result · stuck · inbox · busy · korean)
 npx -p typescript tsc -p . --noEmit
 $ORCA plugin dev watch . --check   # load into Orca, reload on each edit (a new permission needs a new approval)
 ```

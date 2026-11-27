@@ -120,6 +120,21 @@ const stuck = schedules
         ? { ...s, sentAt: null, lastStatus: null, blocked: null, pendingSince: now }
         : { ...s, pendingSince: null, waitNote: null }
   )
+// Two schedules a bot wrote into the inbox folder: one on the terminal its workspace and agent named, one
+// for a workspace where that agent is not running yet.
+const fromInbox: Schedule[] = [
+  { ...open[0], history: [], lastStatus: null },
+  { ...base, id: 'inbox-review', name: 'PR review', terminal: terminal('h1', 'Morning', 'claude', 'acme_notes'), cron: '0 10 * * 1-5', report: true, nextRunAt: now + 4 * 3600_000, source: { id: 'review', by: 'Orca bot' } },
+  {
+    ...base,
+    id: 'inbox-notes',
+    name: 'Release notes',
+    terminal: { handle: '', title: '', agent: 'codex', workspaceId: 'notes', workspace: 'notes', tabId: '', leafId: '' },
+    cron: '0 18 * * 5',
+    nextRunAt: now + 8 * 3600_000,
+    source: { id: 'notes', by: 'Orca bot' }
+  }
+]
 const terminals = schedules.slice(0, 3).map((s) => s.terminal)
 const answered = (list: Schedule[], openNow = terminals) => ({
   'schedules.list': () => list,
@@ -134,6 +149,7 @@ export default defineCheck({
   late: { results, storage: { onboarded: true }, requests: answered(caughtUp) },
   result: { results, storage: { onboarded: true }, requests: answered(withResult) },
   stuck: { results, storage: { onboarded: true }, requests: answered(stuck, terminals.slice(0, 2)) },
+  inbox: { results, storage: { onboarded: true }, requests: answered(fromInbox) },
   busy: { results, storage: { onboarded: true, schedules } },
   korean: { results, storage: { onboarded: true, langPref: 'ko' }, requests: answered(caughtUp) }
 })

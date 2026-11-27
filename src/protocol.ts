@@ -1,5 +1,6 @@
 // Panel ↔ worker contract. Read by both src/panel.tsx and src/worker.ts.
 import type { CheckResult, Schedule, TerminalRef } from './engine'
+import type { ProblemCode } from './inbox'
 
 export {}
 
@@ -40,6 +41,10 @@ export type ImportEntry = {
 /** `found` is false when the app's data is not on this computer — Settings then shows nothing about it. */
 export type ImportList = { found: boolean; dir: string; items: ImportEntry[] }
 
+/** The inbox folder as Settings shows it (src/inbox.ts). `found` is false while the folder does not exist;
+ *  `problems` are the files of the last check that were passed by, and why. */
+export type InboxStatus = { dir: string; found: boolean; problems: { file: string; code: ProblemCode }[] }
+
 /** Plugin storage key of the language ('en' | 'ko'), shared by the panel atom and the worker. */
 export const LANG_KEY = 'lang'
 
@@ -67,6 +72,8 @@ declare module 'orca' {
     'orcacron.list': { output: ImportList }
     /** Copy those over, switched off; ones already here or not importable are passed by. */
     'orcacron.import': { input: { ids: string[] }; output: { added: number } }
+    /** The inbox folder and the files of the last check that could not be used. */
+    'inbox.status': { output: InboxStatus }
   }
   interface PluginPanelEvents {
     'schedules.changed': { schedules: Schedule[] }

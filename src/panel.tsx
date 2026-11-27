@@ -39,10 +39,11 @@ import {
   type PanelContext
 } from 'orca'
 import { type Draft, dayModes, draftOf, cronOfDraft, emptyDraft, weekdaysOf } from './draft'
-import { filterGroup, type Group, groupsOf, holds, matches, terminalTexts } from './groups'
+import { filterGroup, type Group, groupsOf, holds, keyOf, matches, terminalTexts } from './groups'
 import { needsAttention, type PrecheckOutcome, precheckOutcome, type RunRecord, sameTerminal, type Schedule, type TerminalRef } from './engine'
 import { type Lang, langNames, langOfLocale, type NoteCode, noteText, recordText, statusText, whenText, words } from './i18n'
-import { type ImportList, LANG_KEY, type TerminalOption } from './protocol'
+import { unbound } from './inbox'
+import { type ImportList, type InboxStatus, LANG_KEY, type TerminalOption } from './protocol'
 import { type AgentKind, agentKind, agentName } from './screen'
 import { dateKey, dateParts, describe, maxTimes, minuteFromText, zoneText } from './timespec'
 import { messageOf, drawnLength, linkParts, soft } from './text'
@@ -77,6 +78,8 @@ const importing = atom(false)
 /** How many schedules the last import added; null before one. */
 const importAdded = atom<number | null>(null)
 const importError = atom<string | null>(null)
+/** The inbox folder and the files it could not use — read each time Settings opens; null until it answers. */
+const inboxStatus = atom<InboxStatus | null>(null)
 /** The terminal list is being read — the reload button turns into a spinner. */
 const refreshing = atom(false)
 /** False once the worker says it found no Orca CLI — then no terminal can be listed, whatever is open. */
@@ -143,6 +146,10 @@ function openSettings(): void {
   set(importError, null)
   set(settingsOpen, true)
   void loadImport()
+  void plugin
+    .request('inbox.status')
+    .then((s) => set(inboxStatus, s))
+    .catch(() => set(inboxStatus, null))
 }
 
 async function runImport(ids: string[]): Promise<void> {
@@ -722,7 +729,10 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
   const urgent = needsAttention(s)
   const queued = s.pendingSince !== null
   // One run at a time: a second press while one waits or runs would send the prompt again.
-  const sendBlock = s.sentAt !== null ? u.sendNowRunning : queued ? u.sendNowQueued : gone ? u.terminalGone : null
+  // From the inbox, and no terminal matched its workspace and agent yet — not a terminal that closed.
+  const kindAsked = agentKind(s.terminal.agent)
+  const goneText = unbound(s.terminal) ? u.inbox.noTerminal(kindAsked ? agentName[kindAsked] : s.terminal.agent, s.terminal.workspace) : u.terminalGone
+  const sendBlock = s.sentAt !== null ? u.sendNowRunning : queued ? u.sendNowQueued : gone ? goneText : null
   const fix = note ? fixOf[note.code] : undefined
   const fixButton =
     fix === 'pick' || (!note && gone) ? (
@@ -831,10 +841,17 @@ function ScheduleRow({ s, live }: { s: Schedule; live: TerminalOption | null }) 
             // A schedule that is on will find no terminal at its next time; one that is off only says so.
             <Box gap="xs">
               <Text size="xs" tone={s.enabled ? 'warning' : undefined} muted={!s.enabled}>
-                {u.terminalGone}
+                {soft(goneText)}
               </Text>
               <Row>{fixButton}</Row>
             </Box>
+          ) : null}
+          {/* Who put it here, when it was not made in this panel — on the folded card too, so a schedule
+              a bot added is told from one's own at a glance. */}
+          {s.source ? (
+            <Text size="xs" muted>
+              {soft(u.inbox.from(s.source.by))}
+            </Text>
           ) : null}
         </Box>
       </Box>
@@ -1022,7 +1039,7 @@ function SchedulesView() {
   const all = groupsOf(list, read(terminals))
   if (gone && !all.some((g) => holds(g, gone))) {
     const live = read(terminals)?.find((t) => sameTerminal(t, gone.terminal)) ?? null
-    all.push({ key: gone.terminal.leafId || gone.terminal.handle, ref: live ?? gone.terminal, live, recurring: [], once: [] })
+    all.push({ key: keyOf(gone.terminal), ref: live ?? gone.terminal, live, recurring: [], once: [] })
   }
   const groups = all.flatMap((g) => filterGroup(g, q) ?? (gone && holds(g, gone) ? [{ ...g, recurring: [], once: [] }] : []))
   return (
@@ -1390,6 +1407,11 @@ function Form() {
     <Stack gap="md">
       <SubHeader title={d.once ? u.sendOnce : d.id ? u.editSchedule : u.newSchedule} onClose={() => leaveForm('top')} />
       {read(confirmLeave) === 'top' ? confirm : null}
+      {old?.source ? (
+        <Text size="xs" muted>
+          {soft(u.inbox.editHint(old.source.by))}
+        </Text>
+      ) : null}
       {d.once ? null : nameField}
       <Stack gap="xs">
         <TerminalPicker
@@ -1569,6 +1591,38 @@ function Importer() {
   )
 }
 
+/** The inbox folder: where a bot or an agent writes a schedule, how many came from it, and the files of
+ *  the last check that could not be used — the writer has no other place to learn why nothing showed up. */
+function Inbox() {
+  const w = words(read(lang)).ui.inbox
+  const data = read(inboxStatus)
+  if (!data) return null
+  const count = read(schedules).filter((s) => s.source).length
+  return (
+    <Stack gap="xs">
+      <Separator />
+      <Text size="sm" weight="medium">
+        {w.title}
+      </Text>
+      <Text size="xs" muted>
+        {soft(w.hint(data.dir))}
+      </Text>
+      {count > 0 || data.found ? <Text size="xs">{w.count(count)}</Text> : <Text size="xs" muted>{w.empty}</Text>}
+      {data.problems.length > 0 ? (
+        <Callout tone="warning" icon="warning" title={w.problems}>
+          <Stack gap="xs">
+            {data.problems.map((p) => (
+              <Text key={p.file} size="xs">
+                {soft(`${p.file} — ${w.problem[p.code]}`)}
+              </Text>
+            ))}
+          </Stack>
+        </Callout>
+      ) : null}
+    </Stack>
+  )
+}
+
 function Settings() {
   const u = words(read(lang)).ui
   const pick = (v: string) => {
@@ -1607,6 +1661,7 @@ function Settings() {
         </Button>
         <Link href={RELEASE_NOTES}>{u.whatsNew}</Link>
       </Box>
+      <Inbox />
       <Importer />
     </Stack>
   )

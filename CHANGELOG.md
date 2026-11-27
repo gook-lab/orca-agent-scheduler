@@ -2,6 +2,20 @@
 
 Versions are tags (`vX.Y.Z`); `orca plugin update gook-lab.agent-scheduler` moves to the newest one. Each version's notes are also a [release](https://github.com/gook-lab/orca-agent-scheduler/releases), with a summary in Korean.
 
+## 0.14.0 — 2026-11-27
+
+A schedule can come from outside the panel.
+
+- **Inbox.** A bot or an agent adds a schedule by writing one JSON file into `~/.orca-agent-scheduler/inbox/` — name, cron, prompt, **Start a new conversation**, **Ask for a one-line result**, and its own `id`. The worker reads the folder at every check; the schedule is in the panel within 30 seconds, with a notification. The same `id` again replaces, `"deleted": true` removes. The folder is only read: what was last applied is remembered in the plugin's storage. A folder, because nothing else reaches an installed plugin from outside (Orca 1.4.278: `plugin.request` answers the plugin's own panel only, and `orca plugin dev request` refuses installed plugins).
+- **A workspace and an agent in place of a terminal.** The writer has no terminal to point at, so the file says `"target": { "workspace": "/Users/me/code/app", "agent": "claude" }` — a folder inside the workspace or the Orca workspace id will do, and `title` narrows it. Exactly one open terminal that fits: the schedule goes on it. None, or more than one: it arrives without a terminal, its card says which one it waits for with **Pick a terminal**, and it takes the terminal by itself once exactly one fits. Nothing is guessed between two.
+- **A person's edit and the writer's next write.** An unchanged file does nothing, so what you edited — or deleted — in the panel stays. A changed file replaces only the fields whose value changed in it: rename the schedule here, and a new time from the writer leaves your name. A schedule you deleted comes back only when the writer changes the file.
+- **The card names the writer.** `From Orca bot · inbox` in grey on a schedule that came from the folder, folded or open; the search finds it by that name, and Edit says what the writer's next write will replace.
+- **Settings → Inbox** shows the folder, how many schedules came from it, and the files of the last check that could not be used, each with the reason (`review.json — "cron" not understood`). The log says the same once.
+- **A precheck is not taken from a file.** It is a command run in your shell, so it stays something typed in the panel.
+- **Fixed on the way:** two schedules with no terminal counted as being on the same terminal (an empty handle equals an empty handle). No schedule made in the panel could be in that state; one from the inbox can.
+- **README** has the file format, the rules above, and an example for the Orca bot, which writes the schedule of an automation it creates into the inbox as well. Permissions and the approval text say that the worker reads this folder.
+- Checked with `orca plugin test` (245 tests) and `orca plugin check` (a new `inbox` scenario) on Orca 1.4.278. Not yet tried on a live panel with a real bot.
+
 ## 0.13.1 — 2026-11-25
 
 A precheck can be tried from the form, and the prompt shows how it will go out.

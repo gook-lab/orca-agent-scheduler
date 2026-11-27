@@ -1,7 +1,7 @@
 // `orca plugin test .` runs this with the same runtime and checks as Orca.
 import { assert, mockHost, mount, test } from 'orca/testing'
 import { blankSchedule, type Schedule } from './engine'
-import type { ImportList, ScheduleDraft, TerminalOption } from './protocol'
+import type { ImportList, InboxStatus, ScheduleDraft, TerminalOption } from './protocol'
 import { recordText, statusText, whenText, words } from './i18n'
 import * as panel from './panel'
 import { drawnLength, linkParts, soft } from './text'
@@ -22,6 +22,8 @@ type HostOpts = {
   storage?: Record<string, unknown>
   /** What OrcaCron has to bring over; importing marks the asked ones as imported. */
   orcaCron?: ImportList
+  /** The inbox folder as the worker last read it. */
+  inbox?: InboxStatus
 }
 
 function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
@@ -67,6 +69,7 @@ function host(calls: Partial<Calls> = {}, opts: HostOpts = {}) {
           folder: '~/code/toy'
         } as never
       },
+      'inbox.status': () => opts.inbox ?? { dir: '~/.orca-agent-scheduler/inbox', found: false, problems: [] },
       'orcacron.list': () => app,
       'orcacron.import': (input) => {
         const ids = (input as { ids: string[] }).ids
@@ -1702,4 +1705,98 @@ test('a prompt with variables shows how it would go out now — the last result,
   assert.equal(preview(), 'Goes out as: Carry on from Reviewed #9 with #12; #15')
   assert.deepEqual(view.errors, [])
   await view.unmount()
+})
+
+test('a schedule from the inbox says who put it there, folded and in Edit; one made here says nothing', async () => {
+  const view = await mount(panel, { host: host() })
+  const mine: Schedule = { ...blankSchedule('s1'), name: 'Mine', terminal: { ...open[0] }, nextRunAt: Date.now() + 3600_000 }
+  const theirs: Schedule = { ...mine, id: 'inbox-a', name: 'From the bot', source: { id: 'a', by: 'Orca bot' } }
+  const unnamed: Schedule = { ...mine, id: 'inbox-b', name: 'From someone', source: { id: 'b', by: '' } }
+  await view.post('schedules.changed', { schedules: [mine, theirs, unnamed] })
+  const from = view.findAll({ type: 'Text' }).map((e) => plain(e.text)).filter((t) => t.startsWith('From ') && t.includes('inbox'))
+  assert.deepEqual(from, ['From Orca bot · inbox', 'From the inbox'])
+  await view.type({ label: 'Find' }, 'orca bot')
+  assert.deepEqual(view.findAll({ type: 'Switch' }).map((e) => e.label), ['From the bot'], 'the search finds a schedule by who wrote it')
+  await view.type({ label: 'Find' }, '', { replace: true })
+  await unfold(view)
+  await act(view, 'Edit', 1)
+  assert.equal(view.find({ label: 'Name' })?.props.value, 'From the bot')
+  const hint = 'Orca bot wrote this schedule. When it writes again, only the fields it changed are replaced — your other edits stay.'
+  assert.ok(view.findAll({ type: 'Text' }).some((e) => plain(e.text) === hint))
+  await view.press({ type: 'IconButton', label: 'Close' })
+  await act(view, 'Edit', 0)
+  assert.ok(!view.findAll({ type: 'Text' }).some((e) => e.text.includes('wrote this schedule')))
+  await view.unmount()
+})
+
+test('a schedule from the inbox with no terminal yet says which one it waits for, with Pick a terminal', async () => {
+  const view = await mount(panel, { host: host() })
+  const none = { handle: '', title: '', agent: 'claude', workspaceId: 'w9', workspace: 'app', tabId: '', leafId: '' }
+  const base: Schedule = { ...blankSchedule('inbox-a'), name: 'Review', terminal: none, nextRunAt: Date.now() + 3600_000, source: { id: 'a', by: 'Orca bot' } }
+  const second: Schedule = { ...base, id: 'inbox-b', name: 'Report', enabled: false, nextRunAt: null, source: { id: 'b', by: 'Orca bot' } }
+  const elsewhere: Schedule = { ...base, id: 'inbox-c', name: 'Elsewhere', terminal: { ...none, agent: 'codex', workspaceId: '', workspace: 'proj' }, source: { id: 'c', by: '' } }
+  const bound: Schedule = { ...base, id: 'inbox-d', name: 'Bound', terminal: { ...open[0] }, source: { id: 'd', by: 'Orca bot' } }
+  await view.post('schedules.changed', { schedules: [base, second, elsewhere, bound] })
+  const waits = view.findAll({ type: 'Text' }).filter((e) => plain(e.text).includes('terminal to send to in'))
+  assert.deepEqual(
+    waits.map((e) => [plain(e.text), e.props.tone]),
+    [
+      ['No Claude Code terminal to send to in app — it takes the terminal once exactly one is open there', 'warning'],
+      ['No Claude Code terminal to send to in app — it takes the terminal once exactly one is open there', undefined],
+      ['No Codex terminal to send to in proj — it takes the terminal once exactly one is open there', 'warning']
+    ],
+    'orange while it is on; the bound one says nothing'
+  )
+  assert.equal(view.findAll({ type: 'IconButton', label: 'Collapse' }).length, 3, 'one block per workspace and agent still to be matched, and the open terminal\'s')
+  const pick = view.findAll({ type: 'Button', text: 'Pick a terminal' })
+  assert.equal(pick.length, 3)
+  const play = view.findAll({ type: 'IconButton', label: 'Send now' })
+  assert.deepEqual(play.map((b) => b.props.disabled), [false, true, true, true], 'blocks in workspace order: the open terminal\'s first')
+  await view.press(pick[0])
+  assert.equal(view.find({ label: 'Name' })?.props.value, 'Review', 'Edit opens')
+  assert.ok(view.find({ type: 'ListItem', label: 'Morning' }), 'at the list of open terminals')
+  await view.unmount()
+})
+
+test('deleting a schedule with no terminal offers Undo in its own block only', async () => {
+  const deleted: string[] = []
+  const view = await mount(panel, { host: host({ deleted }) })
+  const none = { handle: '', title: '', agent: 'claude', workspaceId: 'w9', workspace: 'app', tabId: '', leafId: '' }
+  const a: Schedule = { ...blankSchedule('inbox-a'), name: 'Review', terminal: none, nextRunAt: Date.now() + 3600_000, source: { id: 'a', by: 'Orca bot' } }
+  const b: Schedule = { ...a, id: 'inbox-b', name: 'Elsewhere', terminal: { ...none, workspaceId: 'w8', workspace: 'proj' }, source: { id: 'b', by: 'Orca bot' } }
+  await view.post('schedules.changed', { schedules: [a, b] })
+  await unfold(view)
+  await act(view, 'Delete', 0)
+  const sure = view.findAll({ type: 'Button', text: 'Delete' }).find((e) => e.props.tone === 'danger')
+  assert.ok(sure)
+  await view.press(sure)
+  assert.deepEqual(deleted, ['inbox-a'])
+  await view.post('schedules.changed', { schedules: [b] })
+  assert.equal(view.findAll({ type: 'Button', text: 'Undo' }).length, 1)
+  assert.equal(view.findAll({ type: 'IconButton', label: 'Collapse' }).length, 2, 'its block stays while Undo is offered')
+  await view.unmount()
+})
+
+test('Settings shows the inbox folder, how many schedules came from it, and the files it passed by', async () => {
+  const inbox: InboxStatus = { dir: '~/.orca-agent-scheduler/inbox', found: true, problems: [{ file: 'half.json', code: 'json' }, { file: 'times.json', code: 'cron' }] }
+  const view = await mount(panel, { host: host({}, { inbox }) })
+  const from: Schedule = { ...blankSchedule('inbox-a'), name: 'Review', terminal: { ...open[0] }, source: { id: 'a', by: 'Orca bot' } }
+  await view.post('schedules.changed', { schedules: [from, { ...blankSchedule('s1'), name: 'Mine', terminal: { ...open[0] } }] })
+  await view.press({ label: 'Settings' })
+  const texts = () => view.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  assert.ok(texts().includes('Inbox — schedules from outside'))
+  assert.ok(texts().some((t) => t.includes('writing a JSON file into ~/.orca-agent-scheduler/inbox')))
+  assert.ok(texts().includes('1 schedule came from it'))
+  assert.ok(titled(view, 'Callout', 'Files passed by'))
+  assert.ok(texts().includes('half.json — not valid JSON'))
+  assert.ok(texts().includes('times.json — "cron" not understood'))
+  await view.unmount()
+
+  const fresh = await mount(panel, { host: host({}, { storage: { langPref: 'ko' } }) })
+  await fresh.press({ label: '설정' })
+  const ko = fresh.findAll({ type: 'Text' }).map((e) => plain(e.text))
+  assert.ok(ko.includes('Inbox — 바깥에서 넣는 예약'))
+  assert.ok(ko.includes('폴더가 아직 없습니다 — 들어온 것이 없습니다.'))
+  assert.equal(titled(fresh, 'Callout', '읽지 못한 파일'), null)
+  await fresh.unmount()
 })

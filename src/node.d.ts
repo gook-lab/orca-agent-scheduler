@@ -12,10 +12,17 @@ declare module 'node:fs' {
   export function existsSync(path: string): boolean
   export function statSync(path: string, options: { throwIfNoEntry: false }): { isFile(): boolean; isDirectory(): boolean; size: number } | undefined
   export function readFileSync(path: string, encoding: 'utf8'): string
+  export function readdirSync(path: string): string[]
+  /** For the tests, which build a folder to read. */
+  export function mkdtempSync(prefix: string): string
+  export function mkdirSync(path: string): void
+  export function writeFileSync(path: string, data: string): void
+  export function rmSync(path: string, options: { recursive: true; force: true }): void
 }
 
 declare module 'node:os' {
   export function homedir(): string
+  export function tmpdir(): string
   export function userInfo(): { shell: string | null }
 }
 

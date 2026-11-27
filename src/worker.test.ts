@@ -1,10 +1,13 @@
 // Runs src/worker.ts against the same orca object Orca hands it (a fake host).
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { mock } from 'node:test'
 import { afterEach, assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { CliResult } from './cli'
 import { blankSchedule, limits, type Schedule } from './engine'
+import { inboxId } from './inbox'
 import { importedId } from './orcacron'
-import type { ImportList, RunnerStatus, TerminalOption } from './protocol'
+import type { ImportList, InboxStatus, RunnerStatus, TerminalOption } from './protocol'
 import { reportToken } from './report'
 import * as main from './worker'
 
@@ -58,11 +61,16 @@ const sentText = (calls: string[][]): string[] => calls.filter((c) => c[1] === '
 // A failed assertion skips the test's own deactivate — stop the 30-second timer anyway, or Node never exits.
 const realOrcaCron = { ...main.orcaCron }
 const realChecks = { ...main.checks }
+const realInbox = { ...main.inbox }
+/** No inbox folder unless a test makes one — never the one in the home folder of whoever runs this. */
+const noInbox: typeof main.inbox = { dir: () => '/home/me/.orca-agent-scheduler/inbox', read: () => null }
+Object.assign(main.inbox, noInbox)
 afterEach(() => {
   main.deactivate()
   main.cli.run = null
   Object.assign(main.orcaCron, realOrcaCron)
   Object.assign(main.checks, realChecks)
+  Object.assign(main.inbox, noInbox)
 })
 
 test('saving fills the next run, stores it and tells the panel', async () => {
@@ -938,4 +946,179 @@ test('Try it now runs the precheck in the workspace folder, sends nothing, and r
   assert.deepEqual(sentText(calls), [])
   assert.equal(h.data().storage.schedules, undefined, 'nothing stored')
   await worker.deactivate()
+})
+
+/** An inbox folder held in memory: file name → what is in it (text as it is, anything else as JSON). */
+function fakeInbox(files: Record<string, unknown>): Record<string, unknown> {
+  main.inbox.read = () => Object.entries(files).map(([file, v]) => ({ file, text: typeof v === 'string' ? v : JSON.stringify(v) }))
+  return files
+}
+/** A worker whose 30-second check is fired by hand. */
+async function checked(h: ReturnType<typeof host>, fn: (worker: Awaited<ReturnType<typeof mountWorker>>, nextCheck: () => Promise<void>) => Promise<void>): Promise<void> {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    const worker = await mountWorker(main, { host: h })
+    await settle()
+    await fn(worker, async () => {
+      mock.timers.tick(main.TICK_MS)
+      await settle()
+    })
+    await worker.deactivate()
+  } finally {
+    mock.timers.reset()
+  }
+}
+const dropped = { id: 'orca-bot:auto_7f3a', source: 'Orca bot', name: 'Morning PR review', cron: '0 9 * * 1-5', prompt: 'Review the pull requests waiting for me.', target: { workspace: '/repo/docs', agent: 'claude' } }
+const schedulesOf = (h: ReturnType<typeof host>): Schedule[] => (h.data().storage.schedules ?? []) as Schedule[]
+
+test('inbox — a file dropped in the folder is a schedule at the next check, on the terminal its workspace and agent name', async () => {
+  fakeCli()
+  const files = fakeInbox({})
+  const h = host()
+  await checked(h, async (worker, nextCheck) => {
+    assert.deepEqual(schedulesOf(h), [])
+    files['review.json'] = dropped
+    await nextCheck()
+    const [s] = schedulesOf(h)
+    assert.deepEqual(
+      [s.id, s.name, s.cron, s.prompt, s.enabled, s.clearFirst, s.report, s.source],
+      [inboxId(dropped.id), dropped.name, dropped.cron, dropped.prompt, true, false, true, { id: dropped.id, by: 'Orca bot' }]
+    )
+    assert.deepEqual(s.terminal, terminal, 'the one Claude Code terminal of the workspace at /repo/docs')
+    assert.ok(s.nextRunAt && s.nextRunAt > Date.now())
+    assert.ok(worker.posts.some((p) => p.event === 'schedules.changed' && (p.payload as { schedules: Schedule[] }).schedules.length === 1), 'the panel hears of it')
+    assert.deepEqual(
+      (h.callsOf('notifications.show') as { body: string }[]).map((n) => n.body),
+      ['Orca bot added a schedule: Morning PR review']
+    )
+    assert.deepEqual(Object.keys(h.data().storage.inbox as object), [dropped.id], 'what was applied is remembered in the plugin\'s own storage')
+    assert.deepEqual(await worker.request('inbox.status'), { dir: '/home/me/.orca-agent-scheduler/inbox', found: true, problems: [] })
+    await nextCheck()
+    assert.equal(schedulesOf(h).length, 1, 'the file stays where it is and adds nothing more')
+    assert.equal(h.callsOf('notifications.show').length, 1)
+    assert.deepEqual(worker.refusals, [])
+  })
+})
+
+test('inbox — with no terminal to match, the schedule waits for a person to pick one, and takes the terminal when it opens', async () => {
+  const noClaude: CliResult = { ok: true, result: { terminals: [{ handle: 'h2', title: 'Review', agentIdentity: 'codex', worktreeId: 'w1', tabId: 't2', leafId: 'l2', lastOutputAt: old, writable: true }] } }
+  // The worker keeps the runner it started with, so the list changes behind the same one.
+  const over: { list?: CliResult } = { list: noClaude }
+  const calls = fakeCli(over)
+  fakeInbox({ 'review.json': dropped })
+  const h = host()
+  await checked(h, async (worker, nextCheck) => {
+    const [s] = schedulesOf(h)
+    assert.deepEqual(s.terminal, { handle: '', title: '', agent: 'claude', workspaceId: 'w1', workspace: 'acme_notes', tabId: '', leafId: '' })
+    // Its time comes with still no terminal: the wait the card answers with "Pick a terminal".
+    await worker.request('schedules.runNow', { id: s.id })
+    await settle()
+    assert.deepEqual(schedulesOf(h)[0].waitNote, { code: 'missing' })
+    const bars = h.callsOf('statusBar.update') as { tone: string }[]
+    assert.equal(bars[bars.length - 1].tone, 'warning')
+    // claude is started in that workspace.
+    delete over.list
+    calls.length = 0
+    await nextCheck()
+    assert.deepEqual(schedulesOf(h)[0].terminal, terminal)
+    assert.deepEqual(sentText(calls).length, 1, 'and the waiting run goes out in the same check')
+    assert.equal(calls.filter((c) => c[1] === 'list').length, 2, 'the list read for the target serves the check too — one read, and the one for the panel')
+  })
+})
+
+test('inbox — a person\'s edit stays until the writer changes that field; the same id replaces, deleted removes', async () => {
+  fakeCli()
+  const files = fakeInbox({ 'review.json': dropped })
+  const h = host()
+  await checked(h, async (worker, nextCheck) => {
+    const [s] = schedulesOf(h)
+    const edited = (await worker.request('schedules.save', { ...s, name: 'Renamed here', prompt: 'Edited here' })) as Schedule
+    assert.deepEqual(edited.source, s.source, 'an edit in the panel keeps where it came from')
+    await nextCheck()
+    assert.deepEqual([schedulesOf(h)[0].name, schedulesOf(h)[0].prompt], ['Renamed here', 'Edited here'], 'the file did not change')
+    files['review.json'] = { ...dropped, cron: '30 10 * * *', newConversation: true }
+    await nextCheck()
+    const [after] = schedulesOf(h)
+    assert.deepEqual([after.name, after.prompt, after.cron, after.clearFirst], ['Renamed here', 'Edited here', '30 10 * * *', true])
+    assert.equal(schedulesOf(h).length, 1)
+    // Deleted in the panel, it does not come back by itself; put back with Undo, it is the same schedule.
+    await worker.request('schedules.delete', { id: after.id })
+    await nextCheck()
+    assert.deepEqual(schedulesOf(h), [])
+    await worker.request('schedules.restore', { schedule: after })
+    assert.deepEqual(schedulesOf(h)[0].source, s.source)
+    files['review.json'] = { id: dropped.id, deleted: true }
+    await nextCheck()
+    assert.deepEqual(schedulesOf(h), [])
+    assert.deepEqual(h.data().storage.inbox, { [dropped.id]: { deleted: true } })
+    assert.equal(h.callsOf('notifications.show').length, 1, 'only the arrival is announced')
+  })
+})
+
+test('inbox — a file that cannot be used is named in Settings and the log once, and the others still come in', async () => {
+  fakeCli()
+  const files = fakeInbox({ 'a-half.json': '{ "id": "x", "na', 'b-times.json': { ...dropped, id: 'b', cron: 'whenever' }, 'c-good.json': dropped })
+  const h = host()
+  await checked(h, async (worker, nextCheck) => {
+    assert.deepEqual(schedulesOf(h).map((s) => s.source?.id), [dropped.id])
+    const status = (await worker.request('inbox.status')) as InboxStatus
+    assert.deepEqual(status.problems, [
+      { file: 'a-half.json', code: 'json' },
+      { file: 'b-times.json', code: 'cron' }
+    ])
+    const said = () => worker.logs.filter((l) => l.startsWith('inbox '))
+    assert.deepEqual(said(), ['inbox a-half.json: not valid JSON', 'inbox b-times.json: "cron" not understood'])
+    await nextCheck()
+    assert.equal(said().length, 2, 'not again at every check')
+    files['a-half.json'] = { ...dropped, id: 'x', name: 'Whole now' }
+    await nextCheck()
+    assert.deepEqual(schedulesOf(h).map((s) => s.name), ['Morning PR review', 'Whole now'])
+    assert.deepEqual(((await worker.request('inbox.status')) as InboxStatus).problems, [{ file: 'b-times.json', code: 'cron' }])
+  })
+})
+
+test('inbox — a folder that cannot be read leaves the schedules alone and the check goes on', async () => {
+  const calls = fakeCli()
+  const waiting: Schedule = { ...blankSchedule('s1'), ...draft, pendingSince: Date.now() - 2 * 60_000 }
+  main.inbox.read = () => {
+    throw new Error('EACCES: permission denied')
+  }
+  const h = host({ schedules: [waiting] })
+  await checked(h, async (worker, nextCheck) => {
+    assert.deepEqual(sentText(calls), ['Plan the day'])
+    await nextCheck()
+    assert.equal(worker.logs.filter((l) => l === 'inbox: EACCES: permission denied').length, 1, 'said once, not at every check')
+  })
+})
+
+test('schedules stored before the inbox load without a source, and one from it keeps its own', () => {
+  const [mine, theirs, odd] = main.normalize([{ id: 's1' }, { id: 's2', source: { id: 'orca-bot:1', by: 'Orca bot', more: 1 } }, { id: 's3', source: { by: 'no id' } }])
+  assert.ok(!('source' in mine))
+  assert.deepEqual(theirs.source, { id: 'orca-bot:1', by: 'Orca bot' })
+  assert.ok(!('source' in odd))
+})
+
+test('only plain .json files of a sane size are read from the inbox folder, in name order', () => {
+  const read = realInbox.read
+  const dir = mkdtempSync(`${tmpdir()}/inbox-test-`)
+  try {
+    assert.equal(read(`${dir}/none`), null, 'no folder yet')
+    writeFileSync(`${dir}/b.json`, '{"id":"b"}')
+    writeFileSync(`${dir}/a.json`, '{"id":"a"}')
+    writeFileSync(`${dir}/a.json.tmp`, 'half')
+    writeFileSync(`${dir}/.hidden.json`, '{}')
+    writeFileSync(`${dir}/notes.txt`, 'x')
+    writeFileSync(`${dir}/huge.json`, 'x'.repeat(300_000))
+    mkdirSync(`${dir}/folder.json`)
+    assert.deepEqual(read(dir), [
+      { file: 'a.json', text: '{"id":"a"}' },
+      { file: 'b.json', text: '{"id":"b"}' },
+      { file: 'folder.json', text: null },
+      { file: 'huge.json', text: null }
+    ])
+    assert.equal(read(`${dir}/a.json`), null, 'a file is not the folder')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  assert.match(realInbox.dir(), /\/\.orca-agent-scheduler\/inbox$|\/inbox$/)
 })

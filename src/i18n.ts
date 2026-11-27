@@ -1,5 +1,6 @@
 // Panel, notification and history text in English (default) and Korean. Records keep codes, not
 // sentences, so switching the language redraws past runs too.
+import type { ProblemCode } from './inbox'
 import { reportForm } from './report'
 import { pad2 } from './text'
 
@@ -231,6 +232,33 @@ const en = {
       badCron: 'cannot import — times not understood',
       nothing: 'Everything is already imported.',
       failed: 'Could not import'
+    },
+    /** Schedules written into the inbox folder by a bot or an agent (src/inbox.ts). */
+    inbox: {
+      from: (by: string) => (by ? `From ${by} · inbox` : 'From the inbox'),
+      noTerminal: (agent: string, workspace: string) =>
+        `No ${agent} terminal to send to in ${workspace} — it takes the terminal once exactly one is open there`,
+      editHint: (by: string) =>
+        `${by || 'The inbox'} wrote this schedule. When it writes again, only the fields it changed are replaced — your other edits stay.`,
+      title: 'Inbox — schedules from outside',
+      hint: (dir: string) =>
+        `A bot or an agent adds a schedule by writing a JSON file into ${dir} (the format is in the README). The folder is read at every check and never written to.`,
+      count: (n: number) => (n === 1 ? '1 schedule came from it' : `${n} schedules came from it`),
+      empty: 'The folder is not there yet — nothing has been written.',
+      problems: 'Files passed by',
+      problem: {
+        unreadable: 'not a plain file, or larger than 256 KB',
+        json: 'not valid JSON',
+        id: 'no "id" (text, up to 200 characters)',
+        name: 'no "name"',
+        cron: '"cron" not understood',
+        never: '"cron" never runs again',
+        prompt: 'no "prompt"',
+        workspace: 'no "target.workspace"',
+        agent: '"target.agent" is not claude, codex or gemini',
+        duplicate: 'its "id" is already in another file'
+      } as Record<ProblemCode, string>,
+      added: (by: string, name: string) => `${by || 'Inbox'} added a schedule: ${name}`
     },
     intro: {
       steps: [
@@ -485,6 +513,31 @@ const ko: Words = {
       badCron: '가져올 수 없음 — 시각을 읽지 못함',
       nothing: '모두 이미 가져왔습니다.',
       failed: '가져오지 못했습니다'
+    },
+    inbox: {
+      from: (by) => (by ? `출처: ${by} · inbox` : '출처: inbox'),
+      noTerminal: (agent, workspace) => `${workspace} 에 보낼 ${agent} 터미널이 없습니다 — 거기에 하나만 열려 있으면 그 터미널로 정해집니다`,
+      editHint: (by) =>
+        `${by || 'inbox'} 에서 들어온 예약입니다. 같은 출처가 다시 쓰면 그쪽이 바꾼 항목만 바뀌고, 여기서 고친 나머지는 그대로 남습니다.`,
+      title: 'Inbox — 바깥에서 넣는 예약',
+      hint: (dir) =>
+        `봇이나 에이전트가 ${dir} 에 JSON 파일을 쓰면 예약이 추가됩니다(형식은 README). 이 폴더는 점검 때마다 읽기만 하고, 쓰거나 지우지 않습니다.`,
+      count: (n) => `여기서 들어온 예약 ${n}개`,
+      empty: '폴더가 아직 없습니다 — 들어온 것이 없습니다.',
+      problems: '읽지 못한 파일',
+      problem: {
+        unreadable: '일반 파일이 아니거나 256 KB 를 넘음',
+        json: 'JSON 이 아님',
+        id: '"id" 없음(글자, 200자까지)',
+        name: '"name" 없음',
+        cron: '"cron" 을 읽지 못함',
+        never: '"cron" 이 앞으로 돌지 않음',
+        prompt: '"prompt" 없음',
+        workspace: '"target.workspace" 없음',
+        agent: '"target.agent" 가 claude · codex · gemini 가 아님',
+        duplicate: '같은 "id" 가 다른 파일에 있음'
+      },
+      added: (by, name) => `예약이 추가됐습니다(${by || 'inbox'}): ${name}`
     },
     intro: {
       steps: [

@@ -76,6 +76,9 @@ export type Schedule = {
   blocked: Note | null
   lastStatus: Status | null
   history: RunRecord[]
+  /** Set on a schedule that came from the inbox folder: the writer's id for it and who the writer says it
+   *  is ('' = not said). Left out on one made in the panel (src/inbox.ts). */
+  source?: { id: string; by: string }
 }
 
 export type AgentStatus = 'working' | 'blocked' | 'waiting' | 'done'
@@ -169,8 +172,9 @@ export function nextAfter(cron: string, now: number): number | null {
 
 type Pane = Pick<TerminalRef, 'handle' | 'leafId'>
 
-/** The same terminal: same handle, or the same pane after Orca restarted under a new handle. */
-export const sameTerminal = (a: Pane, b: Pane): boolean => a.handle === b.handle || (!!a.leafId && a.leafId === b.leafId)
+/** The same terminal: same handle, or the same pane after Orca restarted under a new handle. Two
+ *  references without a terminal (a schedule from the inbox that has none yet) are not one terminal. */
+export const sameTerminal = (a: Pane, b: Pane): boolean => (!!a.handle && a.handle === b.handle) || (!!a.leafId && a.leafId === b.leafId)
 
 /** Waiting on something a person must fix — the worker turns the status bar orange for the same. */
 export const needsAttention = (s: Schedule): boolean =>
